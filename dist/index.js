@@ -25971,7 +25971,7 @@ function createDelegationGateHook(config2, directory) {
       if (typeof subagentType === "string") {
         try {
           const rawTaskId = directArgs?.task_id;
-          const evidenceTaskId = typeof rawTaskId === "string" && rawTaskId.length <= 20 && /^\d+\.\d+$/.test(rawTaskId.trim()) ? rawTaskId.trim() : await getEvidenceTaskId(session, directory);
+          const evidenceTaskId = typeof rawTaskId === "string" && rawTaskId.length <= 20 && isStrictTaskId(rawTaskId.trim()) ? rawTaskId.trim() : await getEvidenceTaskId(session, directory);
           if (evidenceTaskId) {
             const turbo = hasActiveTurboMode(input.sessionID);
             const gateAgents = [
@@ -26094,7 +26094,7 @@ function createDelegationGateHook(config2, directory) {
         }
         try {
           const rawTaskId = directArgs?.task_id;
-          const evidenceTaskId = typeof rawTaskId === "string" && rawTaskId.length <= 20 && /^\d+\.\d+$/.test(rawTaskId.trim()) ? rawTaskId.trim() : await getEvidenceTaskId(session, directory);
+          const evidenceTaskId = typeof rawTaskId === "string" && rawTaskId.length <= 20 && isStrictTaskId(rawTaskId.trim()) ? rawTaskId.trim() : await getEvidenceTaskId(session, directory);
           if (evidenceTaskId) {
             const turbo = hasActiveTurboMode(input.sessionID);
             if (hasReviewer) {
@@ -26340,6 +26340,7 @@ var init_delegation_gate = __esm(() => {
   init_state();
   init_telemetry();
   init_logger();
+  init_task_id();
   init_guardrails();
   init_normalize_tool_name();
   init_utils2();
@@ -90994,6 +90995,7 @@ function checkReviewerGate(taskId, workingDirectory, stageBParallelEnabled = fal
       } catch {}
     }
     const resolvedDir = workingDirectory ?? process.cwd();
+    let evidenceIncompleteReason = null;
     try {
       const evidence = readTaskEvidenceRaw(resolvedDir, taskId);
       if (evidence === null) {} else if (evidence.required_gates && Array.isArray(evidence.required_gates) && evidence.gates) {
@@ -91002,11 +91004,7 @@ function checkReviewerGate(taskId, workingDirectory, stageBParallelEnabled = fal
           return { blocked: false, reason: "" };
         }
         const missingGates = evidence.required_gates.filter((gate) => evidence.gates[gate] == null);
-        telemetry.gateFailed("", "qa_gate", taskId, `Missing gates: [${missingGates.join(", ")}]`);
-        return {
-          blocked: true,
-          reason: `Task ${taskId} is missing required gates: [${missingGates.join(", ")}]. ` + `Required: [${evidence.required_gates.join(", ")}]. ` + `Completed: [${Object.keys(evidence.gates).join(", ")}]. ` + `Delegate the missing gate agents before marking task as completed.`
-        };
+        evidenceIncompleteReason = `Task ${taskId} is missing required gates: [${missingGates.join(", ")}]. ` + `Required: [${evidence.required_gates.join(", ")}]. ` + `Completed: [${Object.keys(evidence.gates).join(", ")}]. ` + `Delegate the missing gate agents before marking task as completed.`;
       }
     } catch (error93) {
       console.warn(`[gate-evidence] Evidence file for task ${taskId} is corrupt or unreadable:`, error93 instanceof Error ? error93.message : String(error93));
@@ -91096,10 +91094,11 @@ function checkReviewerGate(taskId, workingDirectory, stageBParallelEnabled = fal
       }
     }
     const currentStateStr = stateEntries.length > 0 ? stateEntries.join(", ") : "no active sessions";
-    telemetry.gateFailed("", "qa_gate", taskId, `Missing state: tests_run or complete`);
+    const finalReason = evidenceIncompleteReason ?? `Task ${taskId} has not passed QA gates. Current state by session: [${currentStateStr}]. Missing required state: tests_run or complete in at least one valid session. Do not write directly to plan files — use update_task_status after running the reviewer and test_engineer agents.`;
+    telemetry.gateFailed("", "qa_gate", taskId, evidenceIncompleteReason ? `Missing gates: evidence incomplete` : `Missing state: tests_run or complete`);
     return {
       blocked: true,
-      reason: `Task ${taskId} has not passed QA gates. Current state by session: [${currentStateStr}]. Missing required state: tests_run or complete in at least one valid session. Do not write directly to plan files — use update_task_status after running the reviewer and test_engineer agents.`
+      reason: finalReason
     };
   } catch {
     return { blocked: false, reason: "" };

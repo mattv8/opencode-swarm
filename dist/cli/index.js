@@ -20538,6 +20538,7 @@ var init_delegation_gate = __esm(() => {
   init_state();
   init_telemetry();
   init_logger();
+  init_task_id();
   init_guardrails();
   init_normalize_tool_name();
   init_utils2();
