@@ -12,6 +12,7 @@ import type { PluginConfig } from '../config';
 import {
 	DEFAULT_SCORING_CONFIG,
 	FULL_AUTO_BANNER,
+	OPENCODE_NATIVE_AGENTS,
 	TURBO_MODE_BANNER,
 } from '../config/constants';
 import type { RetrospectiveEvidence } from '../config/evidence-schema';
@@ -451,6 +452,28 @@ export function createSystemEnhancerHook(
 				output: { system: string[] },
 			): Promise<void> => {
 				try {
+					// Skip swarm context injection for native opencode agents (build,
+					// plan, general, explore, compaction, title, summary). These agents
+					// have no use for phase/task/knowledge injection and must not trigger
+					// scanDocIndex or the dark-matter scan unnecessarily.
+					//
+					// Limitation: activeAgent is populated lazily by the chat.message
+					// hook, which fires after system.transform. On the very first prompt
+					// of any new session the guard cannot fire because activeAgent has no
+					// entry yet. The hang risk is still mitigated by the async pruning
+					// walk in scanDocIndex (see doc-scan.ts), which makes the worst-case
+					// cost proportional to the number of matching doc files, not the
+					// total number of files in the repo.
+					if (_input.sessionID) {
+						const sessionAgent = swarmState.activeAgent.get(_input.sessionID);
+						if (
+							sessionAgent &&
+							OPENCODE_NATIVE_AGENTS.has(sessionAgent.toLowerCase() as never)
+						) {
+							return;
+						}
+					}
+
 					const maxInjectionTokens =
 						config.context_budget?.max_injection_tokens ?? 4000;
 					let injectedTokens = 0;
