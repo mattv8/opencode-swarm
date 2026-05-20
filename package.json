@@ -52,6 +52,7 @@
 		"@opencode-ai/plugin": "^1.1.53",
 		"@opencode-ai/sdk": "^1.1.53",
 		"@vscode/tree-sitter-wasm": "^0.3.0",
+		"bash-parser": "^0.5.0",
 		"p-limit": "^7.3.0",
 		"picomatch": "^4.0.4",
 		"proper-lockfile": "^4.1.2",
