@@ -51,7 +51,7 @@ var package_default;
 var init_package = __esm(() => {
   package_default = {
     name: "opencode-swarm",
-    version: "7.24.1",
+    version: "7.25.0",
     description: "Architect-centric agentic swarm plugin for OpenCode - hub-and-spoke orchestration with SME consultation, code generation, and QA review",
     main: "dist/index.js",
     types: "dist/index.d.ts",
@@ -104307,6 +104307,23 @@ function checkReviewerGate(taskId, workingDirectory, stageBParallelEnabled = fal
       if (hasReviewer && hasTestEngineer) {
         return { blocked: false, reason: "" };
       }
+      if (!evidenceIncompleteReason && (!hasReviewer || !hasTestEngineer)) {
+        for (const [, chain] of swarmState.delegationChains) {
+          const hasCoder = chain.some((d) => stripKnownSwarmPrefix(d.to) === "coder");
+          if (hasCoder)
+            continue;
+          for (const delegation of chain) {
+            const target = stripKnownSwarmPrefix(delegation.to);
+            if (target === "reviewer")
+              hasReviewer = true;
+            if (target === "test_engineer")
+              hasTestEngineer = true;
+          }
+        }
+        if (hasReviewer && hasTestEngineer) {
+          return { blocked: false, reason: "" };
+        }
+      }
     }
     const currentStateStr = stateEntries.length > 0 ? stateEntries.join(", ") : "no active sessions";
     const chainEntries = [];
@@ -104357,6 +104374,32 @@ function recoverTaskStateFromDelegations(taskId, directory) {
   for (const [sessionId, chain] of swarmState.delegationChains) {
     const session = swarmState.agentSessions.get(sessionId);
     if (session && (session.currentTaskId === taskId || session.lastCoderDelegationTaskId === taskId)) {
+      for (const delegation of chain) {
+        const target = stripKnownSwarmPrefix(delegation.to);
+        if (target === "reviewer")
+          hasReviewer = true;
+        if (target === "test_engineer")
+          hasTestEngineer = true;
+      }
+    }
+  }
+  let hasDurableIncompleteGates = false;
+  if (directory) {
+    try {
+      const taskEvidence = readTaskEvidenceRaw(directory, taskId);
+      if (taskEvidence && taskEvidence.gates && Array.isArray(taskEvidence.required_gates) && taskEvidence.required_gates.length > 0) {
+        const gates = taskEvidence.gates;
+        hasDurableIncompleteGates = taskEvidence.required_gates.some((g) => gates[g] == null);
+      }
+    } catch {
+      hasDurableIncompleteGates = true;
+    }
+  }
+  if (!hasDurableIncompleteGates && (!hasReviewer || !hasTestEngineer)) {
+    for (const [, chain] of swarmState.delegationChains) {
+      const hasCoder = chain.some((d) => stripKnownSwarmPrefix(d.to) === "coder");
+      if (hasCoder)
+        continue;
       for (const delegation of chain) {
         const target = stripKnownSwarmPrefix(delegation.to);
         if (target === "reviewer")
@@ -104512,7 +104555,7 @@ async function executeUpdateTaskStatus(args2, fallbackDir, ctx) {
       try {
         fs107.writeSync(fd, JSON.stringify({
           taskId: args2.task_id,
-          required_gates: ["reviewer", "test_engineer"],
+          required_gates: [],
           gates: {}
         }, null, 2));
         writeOk = true;
@@ -104543,7 +104586,7 @@ async function executeUpdateTaskStatus(args2, fallbackDir, ctx) {
       if (reviewerCheck.blocked) {
         return {
           success: false,
-          message: "Gate check failed: reviewer delegation required before marking task as completed",
+          message: "Gate check failed: required QA gates not yet satisfied for task " + args2.task_id,
           errors: [reviewerCheck.reason]
         };
       }
