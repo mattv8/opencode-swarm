@@ -115,7 +115,20 @@ Do not manually edit:
 
 - `package.json` version
 - `CHANGELOG.md`
-- `.release-please-manifest.json`
+- `.release-please-manifest.json` — exception: reconciliation when the manifest desyncs from actual releases (see below)
+
+### Release-please manifest desync
+
+`.release-please-manifest.json` is the version source of truth for release-please. If it desyncs from the actual published release (e.g., `7.26.0` in manifest but `v7.27.1` on GitHub), release-please will propose a version that goes backwards.
+
+**Common cause:** An older release PR (e.g., `chore(main): release 7.26.0`) merges after a newer one (`chore(main): release 7.27.1`). Both PRs modify the manifest, so the later one to merge wins — regardless of which version is higher.
+
+**Detection:** If a release-please PR proposes a version that seems too low, check:
+1. `gh release list --limit 5` — what's the latest published release?
+2. `git show origin/main:.release-please-manifest.json` — what does the manifest say?
+3. If different, the manifest is desynced.
+
+**Fix:** Open a PR that updates `.release-please-manifest.json` to match the actual latest release (e.g., `"7.27.1"`). Close the incorrect release PR with explanation. After the manifest fix merges, release-please will auto-create a correct release PR.
 
 ## Step 3 - Mandatory validation suite
 
