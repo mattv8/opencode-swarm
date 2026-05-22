@@ -366,6 +366,94 @@ function isTaskCompletedForParallelGuidance(task: Task): boolean {
 	return status === 'completed' || status === 'closed';
 }
 
+function getPlanTaskStatus(plan: Plan, taskId: string): string | null {
+	for (const phase of plan.phases) {
+		const task = phase.tasks.find((candidate) => candidate.id === taskId);
+		if (task) return task.status ?? 'pending';
+	}
+	return null;
+}
+
+function resolveDelegatedPlanTaskId(
+	args: Record<string, unknown>,
+	knownPlanTaskIds?: ReadonlySet<string>,
+): string | null {
+	// Prefer explicit task_id/taskId fields — never fall through to text extraction
+	// when the caller provides a direct task identifier.
+	const rawTaskId = args.task_id ?? args.taskId;
+	if (typeof rawTaskId === 'string') {
+		const trimmed = rawTaskId.trim();
+		if (trimmed.length <= 20 && isStrictTaskId(trimmed)) return trimmed;
+		// Explicit field was present but invalid — fail closed, don't fish in text fields
+		return null;
+	}
+
+	// Text field extraction: collect ALL distinct task IDs to detect ambiguity.
+	// Uses direct regex rather than extractPlanTaskId because that helper returns
+	// only the first match per field, which misses multi-ID prompts.
+	const candidateTextFields = [
+		args.prompt,
+		args.description,
+		args.task,
+		args.input,
+	];
+	const seen = new Set<string>();
+	for (const field of candidateTextFields) {
+		if (typeof field !== 'string') continue;
+		for (const m of field.matchAll(/\b(\d+\.\d+(?:\.\d+)*)\b/g)) {
+			const candidate = m[1];
+			if (isStrictTaskId(candidate)) {
+				// Filter against known plan task IDs when available — excludes
+				// version numbers and other numeric-dot patterns that aren't tasks.
+				if (knownPlanTaskIds && !knownPlanTaskIds.has(candidate)) continue;
+				seen.add(candidate);
+			}
+		}
+	}
+
+	// Fail closed on ambiguity — multiple distinct IDs means we can't determine intent.
+	if (seen.size === 1) return seen.values().next().value as string;
+	return null;
+}
+
+async function findTaskAwaitingCompletion(
+	directory: string | undefined,
+	session: AgentSessionState,
+	requestedTaskId?: string | null,
+): Promise<string | null> {
+	if (!directory) return null;
+
+	let plan: Plan | null = null;
+	try {
+		plan = await loadPlanJsonOnly(directory);
+	} catch {
+		return null;
+	}
+	if (!plan) return null;
+
+	for (const [taskId, state] of session.taskWorkflowStates) {
+		if (state !== 'tests_run') continue;
+		if (requestedTaskId && requestedTaskId === taskId) continue;
+
+		const planStatus = getPlanTaskStatus(plan, taskId);
+		if (!planStatus) continue;
+		if (planStatus === 'completed' || planStatus === 'closed') continue;
+
+		return taskId;
+	}
+
+	return null;
+}
+
+function completionGateViolationMessage(
+	taskAwaitingCompletion: string,
+): string {
+	return (
+		`TASK_COMPLETION_GATE_VIOLATION: Task ${taskAwaitingCompletion} reached tests_run but is not marked completed in plan.json/plan.md. ` +
+		`Call update_task_status with task_id="${taskAwaitingCompletion}" and status="completed" before starting another task.`
+	);
+}
+
 async function buildParallelExecutionGuidance(
 	directory: string | undefined,
 	sessionID: string,
@@ -592,6 +680,55 @@ export function createDelegationGateHook(
 		if (!input.sessionID) return;
 
 		const normalized = normalizeToolName(input.tool);
+
+		// ── Completion gate: blocks starting a different task after QA gates pass ──
+		// Runs for ALL tools (declare_scope, update_task_status, Task), not just Task.
+		const completionArgs = output.args as Record<string, unknown> | undefined;
+		if (completionArgs) {
+			// Load plan task IDs for plan-aware text extraction (filters version numbers)
+			let completionPlanTaskIds: ReadonlySet<string> | undefined;
+			try {
+				const plan = await loadPlanJsonOnly(directory);
+				if (plan) {
+					completionPlanTaskIds = new Set(
+						plan.phases.flatMap((p) => p.tasks.map((t) => t.id)),
+					);
+				}
+			} catch {
+				// Plan unavailable — proceed without plan filtering (safe: may over-block)
+			}
+			const requestedTaskId = resolveDelegatedPlanTaskId(
+				completionArgs,
+				completionPlanTaskIds,
+			);
+			const completionSession = ensureAgentSession(input.sessionID);
+			const taskAwaitingCompletion = await findTaskAwaitingCompletion(
+				directory,
+				completionSession,
+				requestedTaskId,
+			);
+			if (taskAwaitingCompletion) {
+				const allowingSameTaskRetry =
+					requestedTaskId === taskAwaitingCompletion;
+				// Allow completion of ANY task that is itself awaiting completion,
+				// not just the one returned by findTaskAwaitingCompletion.
+				// This prevents deadlock when multiple tasks are in tests_run simultaneously.
+				const requestedTaskIsAwaitingCompletion =
+					requestedTaskId &&
+					completionSession.taskWorkflowStates.get(requestedTaskId) ===
+						'tests_run';
+				const allowCompletionUpdate =
+					normalized === 'update_task_status' &&
+					completionArgs.status === 'completed' &&
+					requestedTaskIsAwaitingCompletion;
+				if (!allowingSameTaskRetry && !allowCompletionUpdate) {
+					throw new Error(
+						completionGateViolationMessage(taskAwaitingCompletion),
+					);
+				}
+			}
+		}
+
 		if (normalized !== 'Task' && normalized !== 'task') return;
 
 		const args = output.args as Record<string, unknown> | undefined;
@@ -707,6 +844,37 @@ export function createDelegationGateHook(
 		// isCouncilGateActive returns false when the plan or QA gate profile is
 		// missing, which is the safe default.
 		const councilActive = await isCouncilGateActive(directory, config.council);
+
+		// ── Completion gate: advance state when architect marks task completed ──
+		if (normalized === 'update_task_status') {
+			const directArgs = input.args as Record<string, unknown> | undefined;
+			const storedArgs = getStoredInputArgs(input.callID) as
+				| Record<string, unknown>
+				| undefined;
+			const completionArgs = directArgs ?? storedArgs;
+			if (completionArgs && completionArgs.status === 'completed') {
+				const rawTaskId = completionArgs.task_id ?? completionArgs.taskId;
+				const completionTaskId =
+					typeof rawTaskId === 'string' ? rawTaskId.trim() : null;
+				if (completionTaskId && isStrictTaskId(completionTaskId)) {
+					try {
+						const completionSession = ensureAgentSession(input.sessionID);
+						await advanceTaskStateAndPersist(
+							completionSession,
+							completionTaskId,
+							'complete',
+							directory,
+							{ telemetrySessionId: input.sessionID },
+							config.council,
+						);
+					} catch (err) {
+						logger.warn(
+							`[delegation-gate] toolAfter completion advancement: could not advance ${completionTaskId} → complete: ${err instanceof Error ? err.message : String(err)}`,
+						);
+					}
+				}
+			}
+		}
 
 		// Council branch: handle submit_council_verdicts tool calls. Records the verdict on the
 		// session, and if APPROVE + allCriteriaMet + zero required fixes, advances the
@@ -1227,6 +1395,25 @@ export function createDelegationGateHook(
 					);
 				}
 			}
+
+			// ── Completion gate: push advisory if a task awaits completion ──
+			if (session.taskWorkflowStates) {
+				for (const [, state] of session.taskWorkflowStates) {
+					if (state === 'tests_run') {
+						const taskAwaiting = await findTaskAwaitingCompletion(
+							directory,
+							session,
+						);
+						if (taskAwaiting) {
+							session.pendingAdvisoryMessages ??= [];
+							session.pendingAdvisoryMessages.push(
+								completionGateViolationMessage(taskAwaiting),
+							);
+						}
+						break; // only push once
+					}
+				}
+			}
 		}
 	};
 
@@ -1449,8 +1636,16 @@ export function createDelegationGateHook(
 							deliberationSessionID,
 							deliberationSession,
 						);
+						const taskAwaitingCompletion = await findTaskAwaitingCompletion(
+							directory,
+							deliberationSession,
+						);
 						let guidance: string;
-						if (lastGate?.taskId) {
+						if (taskAwaitingCompletion) {
+							guidance =
+								`[TASK COMPLETION REQUIRED] Task ${taskAwaitingCompletion} has completed reviewer/test_engineer gates and is awaiting durable plan update.\n` +
+								`[NEXT] Print the task completion checklist, then call update_task_status with task_id="${taskAwaitingCompletion}" and status="completed" before declare_scope or starting another task.`;
+						} else if (lastGate?.taskId) {
 							const gateResult = lastGate.passed ? 'PASSED' : 'FAILED';
 							// Sanitize interpolated values
 							const sanitizedGate = lastGate.gate
