@@ -79,6 +79,8 @@ mock.module('../../../src/hooks/knowledge-store.js', () => ({
 	readRejectedLessons: mockReadRejectedLessons,
 	// Stubs for ESM named-import resolution — transitive consumers reference these.
 	readKnowledge: async () => [],
+	readRetractionRecords: async () => [],
+	appendRetractionRecord: async () => {},
 	resolveSwarmKnowledgePath: () => '',
 	resolveSwarmRejectedPath: () => '',
 	resolveHiveKnowledgePath: () => '',
