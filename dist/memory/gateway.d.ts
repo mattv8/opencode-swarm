@@ -52,3 +52,4 @@ export declare class MemoryGateway {
     private assertEnabled;
 }
 export declare function createMemoryGateway(context: MemoryContext, options?: MemoryGatewayOptions): MemoryGateway;
+export declare function createConfiguredMemoryProvider(directory: string, config: MemoryConfig): MemoryProvider & MemoryProposalStore;

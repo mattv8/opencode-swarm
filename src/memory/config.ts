@@ -2,8 +2,12 @@ import type { MemoryKind } from './types';
 
 export interface MemoryConfig {
 	enabled: boolean;
-	provider: 'local-jsonl';
+	provider: 'local-jsonl' | 'sqlite';
 	storageDir: string;
+	sqlite: {
+		path: string;
+		busyTimeoutMs: number;
+	};
 	recall: {
 		defaultMaxItems: number;
 		defaultTokenBudget: number;
@@ -29,6 +33,10 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 	enabled: false,
 	provider: 'local-jsonl',
 	storageDir: '.swarm/memory',
+	sqlite: {
+		path: '.swarm/memory/memory.db',
+		busyTimeoutMs: 5000,
+	},
 	recall: {
 		defaultMaxItems: 8,
 		defaultTokenBudget: 1200,
@@ -73,6 +81,10 @@ export function resolveMemoryConfig(
 	return {
 		...DEFAULT_MEMORY_CONFIG,
 		...(input ?? {}),
+		sqlite: {
+			...DEFAULT_MEMORY_CONFIG.sqlite,
+			...(input?.sqlite ?? {}),
+		},
 		recall: {
 			...DEFAULT_MEMORY_CONFIG.recall,
 			...(input?.recall ?? {}),

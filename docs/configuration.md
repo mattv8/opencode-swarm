@@ -214,8 +214,10 @@ Optional scoped memory substrate for recall and proposal-only memory writes.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | boolean | `false` | Enable agent access to `swarm_memory_recall` and `swarm_memory_propose` |
-| `provider` | string | `"local-jsonl"` | Memory provider. PR 1 supports only local JSONL |
+| `provider` | string | `"local-jsonl"` | Memory provider. Supports `"local-jsonl"` and opt-in `"sqlite"` |
 | `storageDir` | string | `".swarm/memory"` | Local storage directory under the project root |
+| `sqlite.path` | string | `".swarm/memory/memory.db"` | SQLite database path. Must remain inside `.swarm/` |
+| `sqlite.busyTimeoutMs` | number | `5000` | SQLite busy timeout in milliseconds |
 | `recall.defaultMaxItems` | number | `8` | Default max recalled memories |
 | `recall.defaultTokenBudget` | number | `1200` | Default recall prompt-block token budget |
 | `recall.minScore` | number | `0.05` | Minimum lexical recall score |
@@ -227,7 +229,7 @@ Optional scoped memory substrate for recall and proposal-only memory writes.
 | `writes.mode` | string | `"propose"` | Normal agents can only create proposals |
 | `redaction.rejectDurableSecrets` | boolean | `true` | Reject durable memories that contain likely secrets |
 
-Memory stores local JSONL files under `.swarm/memory/`. Recall is scope-filtered and labels retrieved memory as untrusted background. Proposals are written to `.swarm/memory/proposals.jsonl` and do not become durable memory without curator or trusted gateway review. See [Swarm Memory](memory.md).
+Memory stores local JSONL files under `.swarm/memory/` by default. The opt-in SQLite provider stores `.swarm/memory/memory.db` and preserves the same gateway behavior. Recall is scope-filtered and labels retrieved memory as untrusted background. Proposals do not become durable memory without curator or trusted gateway review. See [Swarm Memory](memory.md).
 
 ### todo_gate
 

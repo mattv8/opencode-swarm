@@ -6,7 +6,11 @@ export type {
 	ProposeMemoryInput,
 	RecallMemoryInput,
 } from './gateway';
-export { createMemoryGateway, MemoryGateway } from './gateway';
+export {
+	createConfiguredMemoryProvider,
+	createMemoryGateway,
+	MemoryGateway,
+} from './gateway';
 export {
 	createMemoryLifecycleHooks,
 	type MemoryLifecycleHookOptions,
@@ -28,6 +32,7 @@ export {
 	resolveMemoryRecallProfile,
 } from './role-profiles';
 export { appendMemoryRunLog, sanitizeRunId } from './run-log';
+export { SQLiteMemoryProvider } from './sqlite-provider';
 export {
 	computeMemoryContentHash,
 	createBundleId,

@@ -504,8 +504,15 @@ export declare const KnowledgeConfigSchema: z.ZodObject<{
 export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 export declare const MemoryConfigSchema: z.ZodObject<{
     enabled: z.ZodDefault<z.ZodBoolean>;
-    provider: z.ZodDefault<z.ZodLiteral<"local-jsonl">>;
+    provider: z.ZodDefault<z.ZodEnum<{
+        "local-jsonl": "local-jsonl";
+        sqlite: "sqlite";
+    }>>;
     storageDir: z.ZodDefault<z.ZodString>;
+    sqlite: z.ZodDefault<z.ZodObject<{
+        path: z.ZodDefault<z.ZodString>;
+        busyTimeoutMs: z.ZodDefault<z.ZodNumber>;
+    }, z.core.$strip>>;
     recall: z.ZodDefault<z.ZodObject<{
         defaultMaxItems: z.ZodDefault<z.ZodNumber>;
         defaultTokenBudget: z.ZodDefault<z.ZodNumber>;
@@ -1162,8 +1169,15 @@ export declare const PluginConfigSchema: z.ZodObject<{
     }, z.core.$strip>>;
     memory: z.ZodOptional<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;
-        provider: z.ZodDefault<z.ZodLiteral<"local-jsonl">>;
+        provider: z.ZodDefault<z.ZodEnum<{
+            "local-jsonl": "local-jsonl";
+            sqlite: "sqlite";
+        }>>;
         storageDir: z.ZodDefault<z.ZodString>;
+        sqlite: z.ZodDefault<z.ZodObject<{
+            path: z.ZodDefault<z.ZodString>;
+            busyTimeoutMs: z.ZodDefault<z.ZodNumber>;
+        }, z.core.$strip>>;
         recall: z.ZodDefault<z.ZodObject<{
             defaultMaxItems: z.ZodDefault<z.ZodNumber>;
             defaultTokenBudget: z.ZodDefault<z.ZodNumber>;

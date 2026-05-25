@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import {
 	MemoryDisabledError,
 	MemoryGateway,
+	SQLiteMemoryProvider,
 	type MemoryProvider,
 	type MemoryRecord,
 } from '../../../src/memory';
@@ -148,6 +149,48 @@ describe('MemoryGateway', () => {
 		expect(bundle.promptBlock).toContain('untrusted retrieved facts');
 		expect(bundle.promptBlock).toContain(record.id);
 		expect(bundle.promptBlock).toContain('age=today');
+	});
+
+	test('gateway behavior is unchanged through the SQLite provider seam', async () => {
+		const provider = new SQLiteMemoryProvider(tmpDir, {
+			enabled: true,
+			provider: 'sqlite',
+		});
+		try {
+			const gateway = new MemoryGateway(
+				{ directory: tmpDir, sessionID: 'session-a', agentRole: 'coder' },
+				{
+					config: { enabled: true },
+					provider,
+					now: () => new Date('2026-05-24T12:00:00.000Z'),
+				},
+			);
+			const proposal = await gateway.propose({
+				operation: 'add',
+				kind: 'repo_convention',
+				text: 'This repo uses bun for SQLite memory tests.',
+				rationale: 'Future agents need the test command.',
+				evidenceRefs: ['package.json'],
+			});
+			const record = gateway.createRecord({
+				kind: 'repo_convention',
+				text: 'This repo uses bun for SQLite memory tests.',
+				evidenceRefs: ['package.json'],
+				confidence: 0.95,
+			}) as MemoryRecord;
+			await gateway.upsertCurated(record);
+
+			const bundle = await gateway.recall({
+				query: 'bun SQLite memory tests',
+				minScore: 0,
+			});
+
+			expect(proposal.status).toBe('pending');
+			expect(bundle.items.map((item) => item.record.id)).toEqual([record.id]);
+			expect(bundle.promptBlock).toContain('## Retrieved Swarm Memory');
+		} finally {
+			provider.close();
+		}
 	});
 
 	test('recall no-ops when provider omits optional usage recording', async () => {

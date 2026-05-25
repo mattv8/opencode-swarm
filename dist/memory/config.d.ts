@@ -1,8 +1,12 @@
 import type { MemoryKind } from './types';
 export interface MemoryConfig {
     enabled: boolean;
-    provider: 'local-jsonl';
+    provider: 'local-jsonl' | 'sqlite';
     storageDir: string;
+    sqlite: {
+        path: string;
+        busyTimeoutMs: number;
+    };
     recall: {
         defaultMaxItems: number;
         defaultTokenBudget: number;

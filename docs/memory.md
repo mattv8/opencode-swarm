@@ -19,6 +19,10 @@ Enable local memory in `.opencode/opencode-swarm.json`:
     "enabled": true,
     "provider": "local-jsonl",
     "storageDir": ".swarm/memory",
+    "sqlite": {
+      "path": ".swarm/memory/memory.db",
+      "busyTimeoutMs": 5000
+    },
     "recall": {
       "defaultMaxItems": 8,
       "defaultTokenBudget": 1200,
@@ -34,7 +38,22 @@ Enable local memory in `.opencode/opencode-swarm.json`:
 }
 ```
 
-Only `local-jsonl` is supported today. Qdrant, embeddings, SQLite migration, and curator approval are separate follow-up features. Recall injection uses the gateway/provider seam, so future storage providers should not change agent behavior.
+`local-jsonl` remains the default provider. `sqlite` is available as an opt-in provider foundation for the same gateway behavior:
+
+```json
+{
+  "memory": {
+    "enabled": true,
+    "provider": "sqlite",
+    "sqlite": {
+      "path": ".swarm/memory/memory.db",
+      "busyTimeoutMs": 5000
+    }
+  }
+}
+```
+
+Qdrant, embeddings, JSONL-to-SQLite migration, and curator approval are separate follow-up features. Recall injection uses the gateway/provider seam, so storage providers do not change agent behavior.
 
 ## Storage
 
@@ -47,6 +66,8 @@ Local memory lives under the project root:
 ```
 
 `memories.jsonl` stores durable records after they are curated or otherwise inserted through the gateway. `proposals.jsonl` stores pending or policy-rejected proposals from agents. `audit.jsonl` records upsert, delete, proposal, recall, and compaction events.
+
+When `provider` is `sqlite`, the database defaults to `.swarm/memory/memory.db` and stores the provider tables `memory_items`, `memory_proposals`, `memory_events`, `memory_recall_usage`, and `schema_migrations`.
 
 Deletes tombstone records by default instead of physically erasing them. Hard delete is available only through internal provider configuration and is not exposed to normal agents.
 
