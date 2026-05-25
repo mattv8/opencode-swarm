@@ -102,6 +102,7 @@ mock.module('../../../src/plan/manager.js', () => ({
 	computePlanContentHash: () => 'test-content-hash',
 	appendLedgerEvent: mock(async () => {}),
 	takeSnapshotEvent: mock(async () => {}),
+	_snapshot_test_exports: {},
 }));
 
 // ── Import under test ─────────────────────────────────────────────────────────
