@@ -52,7 +52,7 @@ var package_default;
 var init_package = __esm(() => {
   package_default = {
     name: "opencode-swarm",
-    version: "7.32.2",
+    version: "7.32.3",
     description: "Architect-centric agentic swarm plugin for OpenCode - hub-and-spoke orchestration with SME consultation, code generation, and QA review",
     main: "dist/index.js",
     types: "dist/index.d.ts",
@@ -17344,8 +17344,12 @@ var init_schema = __esm(() => {
   });
   MemoryConfigSchema = exports_external.object({
     enabled: exports_external.boolean().default(false),
-    provider: exports_external.literal("local-jsonl").default("local-jsonl"),
+    provider: exports_external.enum(["local-jsonl", "sqlite"]).default("local-jsonl"),
     storageDir: exports_external.string().default(".swarm/memory"),
+    sqlite: exports_external.object({
+      path: exports_external.string().default(".swarm/memory/memory.db"),
+      busyTimeoutMs: exports_external.number().int().min(0).max(60000).default(5000)
+    }).default({ path: ".swarm/memory/memory.db", busyTimeoutMs: 5000 }),
     recall: exports_external.object({
       defaultMaxItems: exports_external.number().int().min(1).max(20).default(8),
       defaultTokenBudget: exports_external.number().int().min(100).max(5000).default(1200),

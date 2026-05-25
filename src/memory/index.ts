@@ -6,7 +6,11 @@ export type {
 	ProposeMemoryInput,
 	RecallMemoryInput,
 } from './gateway';
-export { createMemoryGateway, MemoryGateway } from './gateway';
+export {
+	createConfiguredMemoryProvider,
+	createMemoryGateway,
+	MemoryGateway,
+} from './gateway';
 export {
 	createMemoryLifecycleHooks,
 	type MemoryLifecycleHookOptions,
@@ -38,6 +42,7 @@ export {
 	validateMemoryProposal,
 	validateMemoryRecordRules,
 } from './schema';
+export { SQLiteMemoryProvider } from './sqlite-provider';
 export type {
 	MemoryContext,
 	MemoryKind,

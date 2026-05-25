@@ -19,6 +19,10 @@ describe('MemoryConfigSchema', () => {
 			enabled: false,
 			provider: 'local-jsonl',
 			storageDir: '.swarm/memory',
+			sqlite: {
+				path: '.swarm/memory/memory.db',
+				busyTimeoutMs: 5000,
+			},
 			recall: {
 				defaultMaxItems: 8,
 				defaultTokenBudget: 1200,
@@ -83,9 +87,27 @@ describe('MemoryConfigSchema', () => {
 		).toThrow();
 	});
 
+	test('accepts sqlite provider settings without changing the default provider', () => {
+		const parsed = MemoryConfigSchema.parse({
+			provider: 'sqlite',
+			sqlite: {
+				path: '.swarm/memory/custom.db',
+				busyTimeoutMs: 2500,
+			},
+		});
+
+		expect(parsed.provider).toBe('sqlite');
+		expect(parsed.sqlite).toEqual({
+			path: '.swarm/memory/custom.db',
+			busyTimeoutMs: 2500,
+		});
+		expect(MemoryConfigSchema.parse({}).provider).toBe('local-jsonl');
+	});
+
 	test('exports a usable MemoryConfig type', () => {
 		const config: MemoryConfig = MemoryConfigSchema.parse({ enabled: true });
 
 		expect(config.provider).toBe('local-jsonl');
+		expect(config.sqlite.path).toBe('.swarm/memory/memory.db');
 	});
 });
