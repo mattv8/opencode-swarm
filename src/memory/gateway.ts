@@ -20,6 +20,7 @@ import {
 	validateMemoryRecordRules,
 } from './schema';
 import type { RecallScoringDiagnostics } from './scoring';
+import { SQLiteMemoryProvider } from './sqlite-provider';
 import type {
 	MemoryContext,
 	MemoryKind,
@@ -74,12 +75,16 @@ export class MemoryGateway {
 		this.config = resolveMemoryConfig(options.config ?? DEFAULT_MEMORY_CONFIG);
 		this.provider =
 			options.provider ??
-			new LocalJsonlMemoryProvider(context.directory, this.config);
+			createConfiguredMemoryProvider(context.directory, this.config);
 		this.now = options.now ?? (() => new Date());
 	}
 
 	isEnabled(): boolean {
 		return this.config.enabled;
+	}
+
+	async dispose(): Promise<void> {
+		await this.provider.close?.();
 	}
 
 	deriveAllowedScopes(): MemoryScopeRef[] {
@@ -366,6 +371,16 @@ export function createMemoryGateway(
 	options: MemoryGatewayOptions = {},
 ): MemoryGateway {
 	return new MemoryGateway(context, options);
+}
+
+export function createConfiguredMemoryProvider(
+	directory: string,
+	config: MemoryConfig,
+): MemoryProvider & MemoryProposalStore {
+	if (config.provider === 'sqlite') {
+		return new SQLiteMemoryProvider(directory, config);
+	}
+	return new LocalJsonlMemoryProvider(directory, config);
 }
 
 function sourceFromEvidence(

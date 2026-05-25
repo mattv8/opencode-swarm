@@ -948,10 +948,17 @@ export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 export const MemoryConfigSchema = z.object({
 	/** Enable Swarm memory tools and local memory storage. Default: false. */
 	enabled: z.boolean().default(false),
-	/** Memory provider. PR 1 supports local JSONL only. */
-	provider: z.literal('local-jsonl').default('local-jsonl'),
+	/** Memory provider. SQLite is opt-in; local JSONL remains the default. */
+	provider: z.enum(['local-jsonl', 'sqlite']).default('local-jsonl'),
 	/** Storage directory under the project root. Must remain inside .swarm/. */
 	storageDir: z.string().default('.swarm/memory'),
+	sqlite: z
+		.object({
+			/** SQLite database path under the project root .swarm/ directory. */
+			path: z.string().default('.swarm/memory/memory.db'),
+			busyTimeoutMs: z.number().int().min(0).max(60000).default(5000),
+		})
+		.default({ path: '.swarm/memory/memory.db', busyTimeoutMs: 5000 }),
 	recall: z
 		.object({
 			defaultMaxItems: z.number().int().min(1).max(20).default(8),

@@ -1,5 +1,44 @@
 # Changelog
 
+## [7.33.2](https://github.com/zaxbysauce/opencode-swarm/compare/v7.33.1...v7.33.2) (2026-05-25)
+
+
+### Bug Fixes
+
+* **dark-matter:** prevent O(n²) memory explosion and repeated recomputation ([ed68563](https://github.com/zaxbysauce/opencode-swarm/commit/ed6856375e3aebf063394d189265b2534a3ba3d2))
+* **dark-matter:** prevent O(n²) memory explosion and repeated recomputation ([7a12da6](https://github.com/zaxbysauce/opencode-swarm/commit/7a12da621f69d073bc580cfeed8d908ddcc942a8))
+
+## [7.33.1](https://github.com/zaxbysauce/opencode-swarm/compare/v7.33.0...v7.33.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* add missing export stubs to all vi.mock/mock.module calls for plan/manager ([c567cdd](https://github.com/zaxbysauce/opencode-swarm/commit/c567cdd86cdf14ca695394a48428a3a3b2d2e9b9))
+* add missing export stubs to knowledge-injector adversarial test mock ([924e578](https://github.com/zaxbysauce/opencode-swarm/commit/924e5786795a59690fa8312a3abe35f862be6e68))
+* **evidence:** prioritize durable gate file status ([8178259](https://github.com/zaxbysauce/opencode-swarm/commit/81782595ffc9d0c2712c03c51fa74e8509a576ef))
+* **evidence:** recognize durable gates and plan retries ([a5fbb75](https://github.com/zaxbysauce/opencode-swarm/commit/a5fbb757873a742f1c1a66e59cf0d28ffb0cccf9))
+* **plan:** add identity gate, terminal write path, rebuild audit, and race mitigation ([9d4f89a](https://github.com/zaxbysauce/opencode-swarm/commit/9d4f89a6c5dbacef29ece4b82c43fa9d2dabdfbc))
+* **plan:** add identity gate, terminal write path, rebuild audit, and race mitigation ([#976](https://github.com/zaxbysauce/opencode-swarm/issues/976)) ([a9156f5](https://github.com/zaxbysauce/opencode-swarm/commit/a9156f5c97cc7d42ec17dcae50c8a6b8b3c732c7))
+
+## [7.33.0](https://github.com/zaxbysauce/opencode-swarm/compare/v7.32.3...v7.33.0) (2026-05-25)
+
+
+### Features
+
+* **memory:** add sqlite provider foundation ([8da5a5d](https://github.com/zaxbysauce/opencode-swarm/commit/8da5a5dd85e2e07c302feb9d4035e50756c0d9f9))
+* **memory:** add sqlite provider foundation ([c7e5b0d](https://github.com/zaxbysauce/opencode-swarm/commit/c7e5b0d776298573cb0c7225b811e4d82528be0c))
+* **sandbox:** filesystem write-authority enforcement for coder subprocesses ([12d6607](https://github.com/zaxbysauce/opencode-swarm/commit/12d6607d7a7a736ec33d939f05a4e3fdee34eed9))
+* **sandbox:** filesystem write-authority enforcement for coder subprocesses ([ecf378b](https://github.com/zaxbysauce/opencode-swarm/commit/ecf378b6bfa5c23c2c6795139516bed331895a23))
+
+
+### Bug Fixes
+
+* **ci:** resolve quality lint failures ([1cd6fc3](https://github.com/zaxbysauce/opencode-swarm/commit/1cd6fc38922711a4ea8d09a4fbedbdeaa6b7dcb7))
+* **dist:** refresh artifacts after main rebase ([43b202a](https://github.com/zaxbysauce/opencode-swarm/commit/43b202ac65ad404b52afcfb323fd7cec94a29d17))
+* **dist:** regenerate with ci bun parity ([31ffebc](https://github.com/zaxbysauce/opencode-swarm/commit/31ffebc0077ff69fd6d28b10b0e4adbc5bebeb9b))
+* **memory:** dispose providers in memory tools ([7b87ded](https://github.com/zaxbysauce/opencode-swarm/commit/7b87ded4ef1019ee5f9f2ccfb8d1c2e93c42c7c0))
+* **test:** add mock.restore() cleanup to linux.test.ts wrapCommand describe block ([45e9376](https://github.com/zaxbysauce/opencode-swarm/commit/45e9376e83ddb9f3143d3f99a832caf4e4fbc408))
+
 ## [7.32.3](https://github.com/zaxbysauce/opencode-swarm/compare/v7.32.2...v7.32.3) (2026-05-25)
 
 

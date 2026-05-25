@@ -34,6 +34,7 @@ export declare class MemoryGateway {
     private readonly now;
     constructor(context: MemoryContext, options?: MemoryGatewayOptions);
     isEnabled(): boolean;
+    dispose(): Promise<void>;
     deriveAllowedScopes(): MemoryScopeRef[];
     recall(input: RecallMemoryInput): Promise<RecallBundle>;
     propose(input: ProposeMemoryInput): Promise<MemoryProposal>;
@@ -52,3 +53,4 @@ export declare class MemoryGateway {
     private assertEnabled;
 }
 export declare function createMemoryGateway(context: MemoryContext, options?: MemoryGatewayOptions): MemoryGateway;
+export declare function createConfiguredMemoryProvider(directory: string, config: MemoryConfig): MemoryProvider & MemoryProposalStore;

@@ -22,7 +22,7 @@ import { writeCheckpoint } from '../plan/checkpoint';
 import {
 	appendLedgerEvent,
 	computePlanHash,
-	takeSnapshotEvent,
+	takeSnapshotWithRetry,
 } from '../plan/ledger';
 import {
 	loadPlanJsonOnly,
@@ -32,6 +32,9 @@ import {
 import { derivePlanId } from '../plan/utils.js';
 import { swarmState } from '../state';
 import { createSwarmTool } from './create-tool';
+
+/** Test seam for the snapshot retry helper (FR-004). */
+export const _test_exports = { takeSnapshotWithRetry };
 
 /**
  * Arguments for the save_plan tool
@@ -83,6 +86,13 @@ export interface SavePlanArgs {
 	 */
 	confirm_destructive_reset?: boolean;
 	/**
+	 * When true, allows save_plan to overwrite an existing plan that has a
+	 * different identity (swarm_id + title). Without this flag, save_plan
+	 * rejects with PLAN_IDENTITY_MISMATCH if the incoming identity differs
+	 * from the existing plan's identity.
+	 */
+	confirm_identity_change?: boolean;
+	/**
 	 * Architect-facing concurrency controls for this plan.
 	 * When execution_profile.locked is true the profile is immutable — subsequent
 	 * save_plan calls that try to change it will be rejected (fail-closed).
@@ -115,6 +125,18 @@ export interface SavePlanResult {
 		council_parallel: boolean;
 		locked: boolean;
 	};
+}
+
+function executionProfilesEqual(
+	a: NonNullable<Plan['execution_profile']>,
+	b: NonNullable<Plan['execution_profile']>,
+): boolean {
+	return (
+		a.parallelization_enabled === b.parallelization_enabled &&
+		a.max_concurrent_tasks === b.max_concurrent_tasks &&
+		a.council_parallel === b.council_parallel &&
+		a.locked === b.locked
+	);
 }
 
 /**
@@ -419,28 +441,80 @@ export async function executeSavePlan(
 				}
 			}
 
-			// Locked execution_profile enforcement — fail closed (unless reset_statuses clears it)
-			if (existing.execution_profile?.locked) {
-				if (args.execution_profile !== undefined && !args.reset_statuses) {
-					// Caller is trying to change a locked profile without reset → reject
+			// Step 2.6: Plan identity verification — reject mismatched identity
+			// unless explicitly confirmed (FR-001). Prevents accidental overwrite
+			// when an architect passes the wrong title or swarm_id.
+			if (args.confirm_identity_change !== true) {
+				const existingId = derivePlanId(existing);
+				const incomingId = derivePlanId({
+					swarm: args.swarm_id,
+					title: args.title,
+				});
+				if (existingId !== incomingId) {
 					return {
 						success: false,
 						message:
-							'EXECUTION_PROFILE_LOCKED: The execution_profile for this plan is locked and cannot be changed.',
+							'PLAN_IDENTITY_MISMATCH: The incoming plan identity does not match the existing plan. ' +
+							'To overwrite with a new identity, set confirm_identity_change: true.',
 						errors: [
-							'execution_profile.locked is true — to change the profile you must first unlock it via a separate plan revision that explicitly sets locked: false, or reset the plan with reset_statuses.',
+							`Existing plan identity: ${existingId} (swarm: "${existing.swarm}", title: "${existing.title}")`,
+							`Incoming plan identity: ${incomingId} (swarm: "${args.swarm_id}", title: "${args.title}")`,
 						],
 						recovery_guidance:
-							'Remove the execution_profile field from this save_plan call to preserve the locked profile, ' +
-							'or use reset_statuses: true to start fresh (this clears the lock). ' +
-							'Never modify execution_profile directly in plan.json.',
+							'Verify the title and swarm_id match the intended plan. ' +
+							'If the identity change is intentional, retry with confirm_identity_change: true. ' +
+							'Never write .swarm/plan.json or .swarm/plan.md directly.',
 					};
+				}
+			}
+
+			// Locked execution_profile enforcement — fail closed (unless reset_statuses clears it)
+			if (existing.execution_profile?.locked) {
+				if (args.execution_profile !== undefined && !args.reset_statuses) {
+					const requestedProfile = ExecutionProfileSchema.safeParse({
+						...existing.execution_profile,
+						...args.execution_profile,
+					});
+					if (!requestedProfile.success) {
+						return {
+							success: false,
+							message: 'Invalid execution_profile: schema validation failed',
+							errors: requestedProfile.error.issues.map(
+								(i) => `${i.path.join('.')}: ${i.message}`,
+							),
+							recovery_guidance:
+								'Check execution_profile fields: parallelization_enabled (boolean), ' +
+								'max_concurrent_tasks (integer 1-64), council_parallel (boolean), locked (boolean).',
+						};
+					}
+
+					if (
+						executionProfilesEqual(
+							existing.execution_profile,
+							requestedProfile.data,
+						)
+					) {
+						preservedExecutionProfile = existing.execution_profile;
+					} else {
+						// Caller is trying to change a locked profile without reset → reject
+						return {
+							success: false,
+							message:
+								'EXECUTION_PROFILE_LOCKED: The execution_profile for this plan is locked and cannot be changed.',
+							errors: [
+								'execution_profile.locked is true — to change the profile you must first unlock it via a separate plan revision that explicitly sets locked: false, or reset the plan with reset_statuses.',
+							],
+							recovery_guidance:
+								'Remove the execution_profile field from this save_plan call to preserve the locked profile, ' +
+								'or use reset_statuses: true to start fresh (this clears the lock). ' +
+								'Never modify execution_profile directly in plan.json.',
+						};
+					}
+				} else if (!args.reset_statuses) {
+					preservedExecutionProfile = existing.execution_profile;
 				}
 				// When reset_statuses is true, clear the lock (fresh start).
 				// Otherwise preserve the locked profile unchanged.
-				if (!args.reset_statuses) {
-					preservedExecutionProfile = existing.execution_profile;
-				}
 			} else {
 				// Profile is not locked — carry it forward if no new one provided
 				preservedExecutionProfile = existing.execution_profile;
@@ -450,9 +524,8 @@ export async function executeSavePlan(
 
 	// Step 3: Resolve the effective execution_profile for this save.
 	// Precedence: incoming args.execution_profile > preserved existing profile > undefined.
-	// The locked-profile guard above already rejected the case where args.execution_profile
-	// is provided for a locked plan, so reaching here with args.execution_profile set means
-	// the plan is NOT locked (or is brand new).
+	// The locked-profile guard above rejected changes to locked profiles, but
+	// permits idempotent no-op profile repeats so recovery retries can proceed.
 	let resolvedProfile: Plan['execution_profile'] = preservedExecutionProfile;
 	if (args.execution_profile !== undefined) {
 		// Merge incoming profile fields over the preserved base (if any)
@@ -677,7 +750,7 @@ export async function executeSavePlan(
 			// This ensures replayFromLedger always has a complete plan baseline to work from.
 			const savedPlan = await loadPlanJsonOnly(dir);
 			if (savedPlan) {
-				await takeSnapshotEvent(dir, savedPlan).catch(() => {});
+				await takeSnapshotWithRetry(dir, savedPlan);
 			}
 			// Append execution_profile ledger events when the profile changed.
 			// execution_profile_set tracks every profile write; execution_profile_locked
@@ -898,6 +971,14 @@ export const save_plan: ToolDefinition = createSwarmTool({
 					'the new plan. Set true to acknowledge that the destructive reset drops ' +
 					'unfinished work. When set together with reset_statuses, save_plan auto-' +
 					'populates removed_task_ids from the missing set.',
+			),
+		confirm_identity_change: z
+			.boolean()
+			.optional()
+			.describe(
+				'When true, allows overwriting an existing plan that has a different ' +
+					'identity (swarm_id + title). Without this flag, save_plan rejects ' +
+					'with PLAN_IDENTITY_MISMATCH if the identity differs.',
 			),
 		execution_profile: z
 			.object({
