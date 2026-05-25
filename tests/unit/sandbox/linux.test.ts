@@ -146,6 +146,10 @@ describe('BubblewrapSandboxExecutor', () => {
 			);
 		});
 
+		afterEach(() => {
+			mock.restore();
+		});
+
 		test('starts with bwrap', () => {
 			const result = executor.wrapCommand('echo hello', []);
 			expect(result.startsWith('bwrap ')).toBe(true);
@@ -386,6 +390,7 @@ describe('BubblewrapSandboxExecutor', () => {
 
 		afterEach(() => {
 			_internals.probeBwrap = originalProbeBwrap;
+			mock.restore();
 		});
 
 		test.skipIf(isWindows)(
