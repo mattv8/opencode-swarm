@@ -131,13 +131,11 @@ describe('BubblewrapSandboxExecutor', () => {
 		beforeEach(async () => {
 			// Mock probeBwrap to always return true so bwrap wrapping is tested.
 			// Must be set up BEFORE creating the executor (constructor also calls probeBwrap).
-			await mock.module(
-				'../../../src/sandbox/linux/bubblewrap-executor',
-				() => ({
-					BubblewrapSandboxExecutor,
-					_internals: { ..._internals, probeBwrap: () => true },
-				}),
-			);
+			// biome-ignore format: single-line required for invariant check regex
+			await mock.module('../../../src/sandbox/linux/bubblewrap-executor', () => ({
+				BubblewrapSandboxExecutor,
+				_internals: { ..._internals, probeBwrap: () => true },
+			}));
 			executor = new BubblewrapSandboxExecutor(
 				['/scope/a', '/scope/b'],
 				'/tmp',
