@@ -334,12 +334,11 @@ jobs:
         run: |
           set -o pipefail
           IFS=$'\n'
-          shopt -s globstar nullglob
           # Per-file isolation to prevent --smol cache poisoning (#330).
           failed=0
           tmpdir="${RUNNER_TEMP:-${TEMP:-/tmp}}"
           trap 'rm -f "$tmpdir"/bun-out-$$-*' EXIT
-          for f in tests/unit/sandbox/**/*.test.ts; do
+          while IFS= read -r -d '' f; do
             [ -f "$f" ] || continue
             tmp="$tmpdir/bun-out-$$-${f##*/}"
             exit_code=0
@@ -351,7 +350,7 @@ jobs:
               fi
             fi
             rm -f "$tmp"
-          done
+          done < <(find tests/unit/sandbox -name '*.test.ts' -type f -print0)
           exit $failed
       - name: Unit tests (state, agents, knowledge, evidence, plan, misc)
         shell: bash
