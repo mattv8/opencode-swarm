@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.37.0](https://github.com/zaxbysauce/opencode-swarm/compare/v7.36.0...v7.37.0) (2026-05-26)
+
+
+### Features
+
+* **memory:** add sqlite fts5 hybrid recall ([bfaf579](https://github.com/zaxbysauce/opencode-swarm/commit/bfaf579bb2ddb49f0028a38632a593c3fdfe8f95))
+
+
+### Bug Fixes
+
+* **memory:** address sqlite fts recall review notes ([dcb2c7a](https://github.com/zaxbysauce/opencode-swarm/commit/dcb2c7a28da068588d8a1d4324609fd55f08a120))
+* **memory:** close copilot fts recall feedback ([187670a](https://github.com/zaxbysauce/opencode-swarm/commit/187670ad8dd7b89673f3361af69332380faef952))
+
 ## [7.36.0](https://github.com/zaxbysauce/opencode-swarm/compare/v7.35.0...v7.36.0) (2026-05-26)
 
 
