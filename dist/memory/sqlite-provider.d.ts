@@ -15,6 +15,7 @@ export declare class SQLiteMemoryProvider implements MemoryProvider, MemoryPropo
     private readonly config;
     private initialized;
     private db;
+    private ftsAvailable;
     private memories;
     private proposals;
     private lastAutomaticJsonlMigration;
@@ -48,10 +49,19 @@ export declare class SQLiteMemoryProvider implements MemoryProvider, MemoryPropo
     }>;
     hasMigration(name: string): boolean;
     markMigration(version: number, name: string): void;
+    private selectRecallCandidates;
     private runMigrations;
+    private initializeFtsIndex;
+    private recreateFtsIndex;
+    private rebuildFtsIndex;
+    private countValidMemoryRows;
+    private iterateMemoryRows;
+    private parseMemoryRow;
     private loadMemories;
     private loadProposals;
     private writeMemory;
+    private writeMemoryFts;
+    private deleteMemoryFts;
     private writeProposal;
     private applyDecisionToStorage;
     private readPendingProposal;
@@ -63,3 +73,12 @@ export declare class SQLiteMemoryProvider implements MemoryProvider, MemoryPropo
     private insertEvent;
     private requireDb;
 }
+declare function buildFtsQuery(request: RecallRequest): string | null;
+declare function extractFtsTerms(text: string): Set<string>;
+export declare const _test_exports: {
+    buildFtsQuery: typeof buildFtsQuery;
+    extractFtsTerms: typeof extractFtsTerms;
+    FTS_SCHEMA_MIGRATION_NAME: string;
+    FTS_SCHEMA_MIGRATION_VERSION: number;
+};
+export {};

@@ -66,6 +66,53 @@ interface Migration {
 	sql: string;
 }
 
+const FTS_SCHEMA_MIGRATION_VERSION = 3;
+const FTS_SCHEMA_MIGRATION_NAME = 'create_memory_fts5_shadow_index';
+const FTS_TABLE_NAME = 'memory_items_fts';
+const FTS_INDEX_COLUMNS = [
+	{
+		name: 'text',
+		value: (record: MemoryRecord) => record.text,
+	},
+	{
+		name: 'tags',
+		value: (record: MemoryRecord) => record.tags.join(' '),
+	},
+	{
+		name: 'kind',
+		value: (record: MemoryRecord) => record.kind.replace(/_/g, ' '),
+	},
+	{
+		name: 'source_file_path',
+		value: (record: MemoryRecord) => record.source.filePath ?? '',
+	},
+	{
+		name: 'source_ref',
+		value: (record: MemoryRecord) => record.source.ref ?? '',
+	},
+	{
+		name: 'metadata_symbols',
+		value: (record: MemoryRecord) =>
+			collectMetadataSearchStrings(record.metadata, ['symbol', 'symbols']).join(
+				' ',
+			),
+	},
+	{
+		name: 'metadata_files',
+		value: (record: MemoryRecord) =>
+			collectMetadataSearchStrings(record.metadata, [
+				'file',
+				'filePath',
+				'files',
+				'touchedFiles',
+			]).join(' '),
+	},
+] as const;
+const FTS_INSERT_COLUMNS = [
+	'id',
+	...FTS_INDEX_COLUMNS.map((column) => column.name),
+];
+
 const MIGRATIONS: Migration[] = [
 	{
 		version: 1,
@@ -121,6 +168,11 @@ interface MemoryItemRow {
 	record_json: string;
 }
 
+interface FtsCandidateRow {
+	id: string;
+	rank: number;
+}
+
 interface ProposalRow {
 	id: string;
 	proposal_json: string;
@@ -153,6 +205,7 @@ export class SQLiteMemoryProvider
 	private readonly config: MemoryConfig;
 	private initialized = false;
 	private db: Database | null = null;
+	private ftsAvailable = false;
 	private memories = new Map<string, MemoryRecord>();
 	private proposals = new Map<string, MemoryProposal>();
 	private lastAutomaticJsonlMigration: SQLiteJsonlImportResult | null = null;
@@ -205,6 +258,7 @@ export class SQLiteMemoryProvider
 		this.db.run(`PRAGMA busy_timeout = ${busyTimeoutMs};`);
 		this.db.run('PRAGMA foreign_keys = ON;');
 		this.runMigrations();
+		this.ftsAvailable = this.initializeFtsIndex();
 		this.lastAutomaticJsonlMigration = null;
 		await this.migrateLegacyJsonlIfNeeded();
 		const memoryLoad = this.loadMemories();
@@ -265,6 +319,7 @@ export class SQLiteMemoryProvider
 		if (this.config.hardDelete) {
 			this.memories.delete(id);
 			this.requireDb().run('DELETE FROM memory_items WHERE id = ?', [id]);
+			this.deleteMemoryFts(id);
 		} else {
 			const tombstone: MemoryRecord = {
 				...existing,
@@ -286,20 +341,24 @@ export class SQLiteMemoryProvider
 		diagnostics: RecallScoringDiagnostics;
 	}> {
 		await this.initialize();
-		const records = await this.list({
+		const scopedRecords = await this.list({
 			scopes: request.scopes,
 			kinds: request.kinds,
 			includeExpired: request.includeExpired,
 		});
-		const result = scoreMemoryRecordsWithDiagnostics(records, request);
+		const candidates = this.selectRecallCandidates(request, scopedRecords);
+		const result = scoreMemoryRecordsWithDiagnostics(
+			candidates.records,
+			request,
+		);
+		const reranked = candidates.ftsOrder
+			? rerankWithFts(result.items, candidates.ftsOrder)
+			: result.items;
 		return {
-			items: result.items.slice(0, request.maxItems),
+			items: reranked.slice(0, request.maxItems),
 			diagnostics: {
 				...result.diagnostics,
-				returnedCount: Math.min(
-					result.diagnostics.returnedCount,
-					request.maxItems,
-				),
+				returnedCount: Math.min(reranked.length, request.maxItems),
 			},
 		};
 	}
@@ -414,6 +473,7 @@ export class SQLiteMemoryProvider
 		if (!this.db) return;
 		this.db.close();
 		this.db = null;
+		this.ftsAvailable = false;
 		this.initialized = false;
 		this.lastAutomaticJsonlMigration = null;
 	}
@@ -466,6 +526,53 @@ export class SQLiteMemoryProvider
 		);
 	}
 
+	private selectRecallCandidates(
+		request: RecallRequest,
+		scopedRecords: MemoryRecord[],
+	): {
+		records: MemoryRecord[];
+		usedFts: boolean;
+		ftsOrder?: Map<string, number>;
+	} {
+		const ftsQuery = buildFtsQuery(request);
+		if (!this.ftsAvailable || !ftsQuery) {
+			return { records: scopedRecords, usedFts: false };
+		}
+		const scopedIds = new Set(scopedRecords.map((record) => record.id));
+		if (scopedIds.size === 0) {
+			return { records: [], usedFts: true, ftsOrder: new Map() };
+		}
+		try {
+			const rows = this.requireDb()
+				.query<FtsCandidateRow, [string, string, number]>(
+					`SELECT id, bm25(${FTS_TABLE_NAME}) AS rank
+					FROM ${FTS_TABLE_NAME}
+					WHERE ${FTS_TABLE_NAME} MATCH ?
+						AND id IN (SELECT value FROM json_each(?))
+					ORDER BY rank ASC
+					LIMIT ?`,
+				)
+				.all(
+					ftsQuery,
+					JSON.stringify(Array.from(scopedIds)),
+					Math.max(100, request.maxItems * 20),
+				);
+			const ftsOrder = new Map<string, number>();
+			for (const row of rows) {
+				if (!scopedIds.has(row.id)) continue;
+				ftsOrder.set(row.id, ftsOrder.size);
+			}
+			if (ftsOrder.size === 0 && (request.mode ?? 'manual') === 'manual') {
+				return { records: scopedRecords, usedFts: false };
+			}
+			const records = scopedRecords.filter((record) => ftsOrder.has(record.id));
+			return { records, usedFts: true, ftsOrder };
+		} catch {
+			this.ftsAvailable = false;
+			return { records: scopedRecords, usedFts: false };
+		}
+	}
+
 	private runMigrations(): void {
 		const db = this.requireDb();
 		db.run(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -499,6 +606,92 @@ export class SQLiteMemoryProvider
 		}
 	}
 
+	private initializeFtsIndex(): boolean {
+		const db = this.requireDb();
+		try {
+			if (!this.hasMigration(FTS_SCHEMA_MIGRATION_NAME)) {
+				this.recreateFtsIndex();
+				this.markMigration(
+					FTS_SCHEMA_MIGRATION_VERSION,
+					FTS_SCHEMA_MIGRATION_NAME,
+				);
+				this.insertEvent(
+					'migration',
+					String(FTS_SCHEMA_MIGRATION_VERSION),
+					FTS_SCHEMA_MIGRATION_NAME,
+				);
+			} else {
+				db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS ${FTS_TABLE_NAME} USING fts5(
+					${ftsCreateColumnsSql()}
+				)`);
+			}
+			this.ftsAvailable = true;
+			const validMemoryCount = this.countValidMemoryRows();
+			const ftsCount =
+				db
+					.query<{ count: number }, []>(
+						`SELECT COUNT(*) AS count FROM ${FTS_TABLE_NAME}`,
+					)
+					.get()?.count ?? 0;
+			if (validMemoryCount !== ftsCount) {
+				this.rebuildFtsIndex();
+			}
+			return true;
+		} catch {
+			this.ftsAvailable = false;
+			return false;
+		}
+	}
+
+	private recreateFtsIndex(): void {
+		const db = this.requireDb();
+		const recreate = db.transaction(() => {
+			db.run(`DROP TABLE IF EXISTS ${FTS_TABLE_NAME}`);
+			db.run(`CREATE VIRTUAL TABLE ${FTS_TABLE_NAME} USING fts5(
+				${ftsCreateColumnsSql()}
+			)`);
+		});
+		recreate();
+	}
+
+	private rebuildFtsIndex(): void {
+		const db = this.requireDb();
+		const rebuild = db.transaction(() => {
+			db.run(`DELETE FROM ${FTS_TABLE_NAME}`);
+			for (const row of this.iterateMemoryRows()) {
+				const record = this.parseMemoryRow(row);
+				if (record) {
+					this.writeMemoryFts(record);
+				}
+			}
+		});
+		rebuild();
+	}
+
+	private countValidMemoryRows(): number {
+		let count = 0;
+		for (const row of this.iterateMemoryRows()) {
+			if (this.parseMemoryRow(row)) count++;
+		}
+		return count;
+	}
+
+	private *iterateMemoryRows(): IterableIterator<MemoryItemRow> {
+		yield* this.requireDb()
+			.query<MemoryItemRow, []>('SELECT id, record_json FROM memory_items')
+			.iterate();
+	}
+
+	private parseMemoryRow(row: MemoryItemRow): MemoryRecord | null {
+		try {
+			return validateMemoryRecordRules(JSON.parse(row.record_json), {
+				rejectDurableSecrets: this.config.redaction.rejectDurableSecrets,
+			});
+		} catch {
+			return null;
+		}
+	}
+
 	private loadMemories(): { records: MemoryRecord[]; invalidCount: number } {
 		const rows = this.requireDb()
 			.query<MemoryItemRow, []>(
@@ -508,13 +701,10 @@ export class SQLiteMemoryProvider
 		const records: MemoryRecord[] = [];
 		let invalidCount = 0;
 		for (const row of rows) {
-			try {
-				records.push(
-					validateMemoryRecordRules(JSON.parse(row.record_json), {
-						rejectDurableSecrets: this.config.redaction.rejectDurableSecrets,
-					}),
-				);
-			} catch {
+			const record = this.parseMemoryRow(row);
+			if (record) {
+				records.push(record);
+			} else {
 				invalidCount++;
 			}
 		}
@@ -571,6 +761,32 @@ export class SQLiteMemoryProvider
 				JSON.stringify(record),
 			],
 		);
+		this.writeMemoryFts(record);
+	}
+
+	private writeMemoryFts(record: MemoryRecord): void {
+		if (!this.ftsAvailable) return;
+		try {
+			const db = this.requireDb();
+			db.run(`DELETE FROM ${FTS_TABLE_NAME} WHERE id = ?`, [record.id]);
+			db.run(
+				`INSERT INTO ${FTS_TABLE_NAME} (
+					${FTS_INSERT_COLUMNS.join(', ')}
+				) VALUES (${FTS_INSERT_COLUMNS.map(() => '?').join(', ')})`,
+				[record.id, ...ftsColumnValues(record)],
+			);
+		} catch {
+			this.ftsAvailable = false;
+		}
+	}
+
+	private deleteMemoryFts(id: string): void {
+		if (!this.ftsAvailable) return;
+		try {
+			this.requireDb().run(`DELETE FROM ${FTS_TABLE_NAME} WHERE id = ?`, [id]);
+		} catch {
+			this.ftsAvailable = false;
+		}
 	}
 
 	private writeProposal(proposal: MemoryProposal): void {
@@ -835,3 +1051,114 @@ function splitSql(sql: string): string[] {
 		.map((statement) => statement.trim())
 		.filter(Boolean);
 }
+
+const FTS_STOP_WORDS = new Set([
+	'a',
+	'an',
+	'and',
+	'are',
+	'as',
+	'at',
+	'be',
+	'by',
+	'for',
+	'from',
+	'goal',
+	'how',
+	'in',
+	'into',
+	'is',
+	'it',
+	'of',
+	'on',
+	'or',
+	'role',
+	'task',
+	'that',
+	'the',
+	'this',
+	'to',
+	'user',
+	'what',
+	'when',
+	'with',
+]);
+
+function buildFtsQuery(request: RecallRequest): string | null {
+	const text =
+		request.mode === 'injection' && request.task
+			? `${request.task}\n${request.query}`
+			: `${request.query}\n${request.task ?? ''}`;
+	const terms = Array.from(extractFtsTerms(text)).slice(0, 40);
+	if (terms.length === 0) return null;
+	return terms.map((term) => `"${term}"`).join(' OR ');
+}
+
+function extractFtsTerms(text: string): Set<string> {
+	const terms = new Set<string>();
+	for (const match of text.toLowerCase().matchAll(/[a-z0-9_]{2,}/g)) {
+		const term = match[0];
+		if (FTS_STOP_WORDS.has(term)) continue;
+		if (term.length < 3 && !/^\d+$/.test(term)) continue;
+		terms.add(term);
+	}
+	return terms;
+}
+
+function ftsCreateColumnsSql(): string {
+	return [
+		'id UNINDEXED',
+		...FTS_INDEX_COLUMNS.map((column) => column.name),
+	].join(',\n\t\t\t\t');
+}
+
+function ftsColumnValues(record: MemoryRecord): string[] {
+	return FTS_INDEX_COLUMNS.map((column) => column.value(record));
+}
+
+function collectMetadataSearchStrings(
+	metadata: Record<string, unknown>,
+	keys: string[],
+): string[] {
+	const values: string[] = [];
+	for (const key of keys) {
+		const value = metadata[key];
+		if (typeof value === 'string') {
+			values.push(value);
+			continue;
+		}
+		if (!Array.isArray(value)) continue;
+		for (const item of value) {
+			if (typeof item === 'string') values.push(item);
+		}
+	}
+	return values;
+}
+
+function rerankWithFts(
+	items: RecallResultItem[],
+	ftsOrder: Map<string, number>,
+): RecallResultItem[] {
+	const denominator = Math.max(ftsOrder.size, 1);
+	return items
+		.map((item) => {
+			const order = ftsOrder.get(item.record.id);
+			if (order === undefined) return item;
+			const ftsBoost = ((denominator - order) / denominator) * 0.08;
+			return {
+				...item,
+				score: item.score + ftsBoost,
+				reason: `${item.reason}, fts_rank=${order + 1}`,
+			};
+		})
+		.sort(
+			(a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id),
+		);
+}
+
+export const _test_exports = {
+	buildFtsQuery,
+	extractFtsTerms,
+	FTS_SCHEMA_MIGRATION_NAME,
+	FTS_SCHEMA_MIGRATION_VERSION,
+};

@@ -52,7 +52,7 @@ var package_default;
 var init_package = __esm(() => {
   package_default = {
     name: "opencode-swarm",
-    version: "7.35.0",
+    version: "7.36.0",
     description: "Architect-centric agentic swarm plugin for OpenCode - hub-and-spoke orchestration with SME consultation, code generation, and QA review",
     main: "dist/index.js",
     types: "dist/index.d.ts",
@@ -45732,6 +45732,102 @@ var init_curator_decision_helpers = __esm(() => {
   init_schema2();
 });
 
+// src/memory/role-profiles.ts
+function resolveMemoryRecallProfile(agentRole) {
+  const role = normalizeMemoryAgentRole(agentRole);
+  return MEMORY_RECALL_PROFILES[role] ?? MEMORY_RECALL_PROFILES.coder;
+}
+function normalizeMemoryAgentRole(agentRole) {
+  const base = stripKnownSwarmPrefix(agentRole ?? "architect");
+  if (base === "reviewer" || base === "test_engineer")
+    return "qa";
+  if (base === "critic" || base === "critic_sounding_board" || base === "critic_drift_verifier" || base === "critic_hallucination_verifier") {
+    return "security";
+  }
+  if (base === "curator_init" || base === "curator_phase")
+    return "curator";
+  if (base === "docs")
+    return "sme";
+  if (base === "architect" || base === "sme" || base === "coder" || base === "security" || base === "curator") {
+    return base;
+  }
+  return "coder";
+}
+var MEMORY_RECALL_PROFILES;
+var init_role_profiles = __esm(() => {
+  init_schema();
+  MEMORY_RECALL_PROFILES = {
+    architect: {
+      kinds: [
+        "project_fact",
+        "architecture_decision",
+        "repo_convention",
+        "failure_pattern",
+        "security_note"
+      ],
+      maxItems: 10,
+      tokenBudget: 1600
+    },
+    sme: {
+      kinds: [
+        "api_finding",
+        "code_pattern",
+        "repo_convention",
+        "failure_pattern",
+        "evidence"
+      ],
+      maxItems: 8,
+      tokenBudget: 1200
+    },
+    coder: {
+      kinds: [
+        "architecture_decision",
+        "repo_convention",
+        "code_pattern",
+        "test_pattern",
+        "failure_pattern"
+      ],
+      maxItems: 8,
+      tokenBudget: 1200
+    },
+    qa: {
+      kinds: [
+        "test_pattern",
+        "failure_pattern",
+        "repo_convention",
+        "security_note"
+      ],
+      maxItems: 8,
+      tokenBudget: 1200
+    },
+    security: {
+      kinds: [
+        "security_note",
+        "architecture_decision",
+        "repo_convention",
+        "evidence"
+      ],
+      maxItems: 8,
+      tokenBudget: 1200
+    },
+    curator: {
+      kinds: [
+        "project_fact",
+        "architecture_decision",
+        "repo_convention",
+        "api_finding",
+        "code_pattern",
+        "test_pattern",
+        "failure_pattern",
+        "security_note",
+        "evidence"
+      ],
+      maxItems: 20,
+      tokenBudget: 3000
+    }
+  };
+});
+
 // src/memory/scoring.ts
 function tokenize(text) {
   return new Set(text.toLowerCase().replace(/[^\w\s-]/g, " ").split(/\s+/).map((token) => token.trim()).filter(Boolean));
@@ -45785,13 +45881,16 @@ function kindProfileBoost(kind, request) {
     return 0.5;
   return request.kinds.includes(kind) ? 1 : 0;
 }
+function roleProfileBoost(kind, context) {
+  return context.roleProfileKinds?.has(kind) ? 1 : 0;
+}
 function sameScope(a, b) {
   return stableScopeKey(a) === stableScopeKey(b);
 }
 function scopeAllowed(recordScope, allowedScopes) {
   return allowedScopes.some((scope) => sameScope(recordScope, scope));
 }
-function scoreMemoryRecordDetailed(record3, request) {
+function scoreMemoryRecordDetailed(record3, request, context) {
   if (!request.includeExpired && isExpired(record3)) {
     return { item: null, skipReason: "filtered" };
   }
@@ -45806,7 +45905,7 @@ function scoreMemoryRecordDetailed(record3, request) {
   if (request.kinds && !request.kinds.includes(record3.kind)) {
     return { item: null, skipReason: "filtered" };
   }
-  const queryTokens = request.mode === "injection" && request.task ? tokenize(request.task) : tokenize(request.query);
+  const queryTokens = request.mode === "injection" && context.taskTokens ? context.taskTokens : context.queryTokens;
   const textTokens = tokenize(record3.text);
   const tagTokens = tokenize(record3.tags.join(" "));
   const fileTokens = tokenize([
@@ -45819,24 +45918,31 @@ function scoreMemoryRecordDetailed(record3, request) {
     ])
   ].filter((value) => typeof value === "string").join(" "));
   const symbolTokens = tokenize(collectMetadataStrings(record3.metadata, ["symbol", "symbols"]).join(" "));
-  const kindQueryOverlap = overlap(queryTokens, tokenize(normalizeKindText(record3.kind)));
+  const kindTokens = tokenize(normalizeKindText(record3.kind));
+  const sourceRefTokens = tokenize(record3.source.ref ?? "");
+  const taskSearchTokens = unionTokens(textTokens, tagTokens, fileTokens, symbolTokens, kindTokens, sourceRefTokens);
+  const taskTermOverlap = context.taskTokens ? overlap(context.taskTokens, taskSearchTokens) : 0;
+  const kindQueryOverlap = overlap(queryTokens, kindTokens);
   const textOverlap = overlap(queryTokens, textTokens);
   const tagOverlap = overlap(queryTokens, tagTokens);
   const fileOverlap = overlap(queryTokens, fileTokens);
   const symbolOverlap = overlap(queryTokens, symbolTokens);
   const kindMatch = request.kinds?.includes(record3.kind) ?? false;
   const scopeMatch = scopeAllowed(record3.scope, request.scopes);
+  const roleBoost = roleProfileBoost(record3.kind, context);
   const hasQuerySignal = textOverlap > 0 || tagOverlap > 0 || fileOverlap > 0 || symbolOverlap > 0 || kindQueryOverlap > 0;
   if (request.mode === "injection" && request.requireQuerySignal !== false && !hasQuerySignal) {
     return { item: null, skipReason: "no_signal" };
   }
-  const score = textOverlap * 0.45 + tagOverlap * 0.2 + fileOverlap * 0.05 + symbolOverlap * 0.05 + scopeSpecificityBoost(record3.scope) * 0.15 + kindProfileBoost(record3.kind, request) * 0.1 + record3.confidence * 0.1;
+  const score = textOverlap * 0.38 + tagOverlap * 0.16 + fileOverlap * 0.12 + symbolOverlap * 0.08 + taskTermOverlap * 0.08 + scopeSpecificityBoost(record3.scope) * 0.12 + kindProfileBoost(record3.kind, request) * 0.06 + roleBoost * 0.05 + record3.confidence * 0.08;
   const reasonParts = [
     textOverlap > 0 ? `text_overlap=${textOverlap.toFixed(2)}` : null,
     tagOverlap > 0 ? `tag_overlap=${tagOverlap.toFixed(2)}` : null,
     fileOverlap > 0 ? `file_overlap=${fileOverlap.toFixed(2)}` : null,
     symbolOverlap > 0 ? `symbol_overlap=${symbolOverlap.toFixed(2)}` : null,
+    taskTermOverlap > 0 ? `task_terms=${taskTermOverlap.toFixed(2)}` : null,
     kindQueryOverlap > 0 ? `kind_query=${kindQueryOverlap.toFixed(2)}` : null,
+    roleBoost > 0 ? "role_profile" : null,
     `scope=${record3.scope.type}`,
     `confidence=${record3.confidence.toFixed(2)}`
   ].filter(Boolean);
@@ -45858,6 +45964,7 @@ function scoreMemoryRecordDetailed(record3, request) {
 }
 function scoreMemoryRecordsWithDiagnostics(records, request) {
   const minScore = request.minScore ?? 0;
+  const context = createScoringContext(request);
   const diagnostics = {
     candidateCount: records.length,
     preScoredFilteredCount: 0,
@@ -45868,7 +45975,7 @@ function scoreMemoryRecordsWithDiagnostics(records, request) {
   };
   const items = [];
   for (const record3 of records) {
-    const result = scoreMemoryRecordDetailed(record3, request);
+    const result = scoreMemoryRecordDetailed(record3, request, context);
     if (!result.item) {
       if (result.skipReason === "filtered")
         diagnostics.preScoredFilteredCount++;
@@ -45887,7 +45994,24 @@ function scoreMemoryRecordsWithDiagnostics(records, request) {
   diagnostics.returnedCount = items.length;
   return { items, diagnostics };
 }
+function createScoringContext(request) {
+  const taskTokens = request.task ? tokenize(request.task) : undefined;
+  return {
+    taskTokens,
+    queryTokens: tokenize(request.query),
+    roleProfileKinds: request.agentRole ? new Set(resolveMemoryRecallProfile(request.agentRole).kinds) : undefined
+  };
+}
+function unionTokens(...sets) {
+  const union3 = new Set;
+  for (const set3 of sets) {
+    for (const token of set3)
+      union3.add(token);
+  }
+  return union3;
+}
 var init_scoring = __esm(() => {
+  init_role_profiles();
   init_schema2();
 });
 
@@ -46462,6 +46586,7 @@ class SQLiteMemoryProvider {
   config;
   initialized = false;
   db = null;
+  ftsAvailable = false;
   memories = new Map;
   proposals = new Map;
   lastAutomaticJsonlMigration = null;
@@ -46509,6 +46634,7 @@ class SQLiteMemoryProvider {
     this.db.run(`PRAGMA busy_timeout = ${busyTimeoutMs};`);
     this.db.run("PRAGMA foreign_keys = ON;");
     this.runMigrations();
+    this.ftsAvailable = this.initializeFtsIndex();
     this.lastAutomaticJsonlMigration = null;
     await this.migrateLegacyJsonlIfNeeded();
     const memoryLoad = this.loadMemories();
@@ -46550,6 +46676,7 @@ class SQLiteMemoryProvider {
     if (this.config.hardDelete) {
       this.memories.delete(id);
       this.requireDb().run("DELETE FROM memory_items WHERE id = ?", [id]);
+      this.deleteMemoryFts(id);
     } else {
       const tombstone = {
         ...existing,
@@ -46566,17 +46693,19 @@ class SQLiteMemoryProvider {
   }
   async recallWithDiagnostics(request) {
     await this.initialize();
-    const records = await this.list({
+    const scopedRecords = await this.list({
       scopes: request.scopes,
       kinds: request.kinds,
       includeExpired: request.includeExpired
     });
-    const result = scoreMemoryRecordsWithDiagnostics(records, request);
+    const candidates = this.selectRecallCandidates(request, scopedRecords);
+    const result = scoreMemoryRecordsWithDiagnostics(candidates.records, request);
+    const reranked = candidates.ftsOrder ? rerankWithFts(result.items, candidates.ftsOrder) : result.items;
     return {
-      items: result.items.slice(0, request.maxItems),
+      items: reranked.slice(0, request.maxItems),
       diagnostics: {
         ...result.diagnostics,
-        returnedCount: Math.min(result.diagnostics.returnedCount, request.maxItems)
+        returnedCount: Math.min(reranked.length, request.maxItems)
       }
     };
   }
@@ -46666,6 +46795,7 @@ class SQLiteMemoryProvider {
       return;
     this.db.close();
     this.db = null;
+    this.ftsAvailable = false;
     this.initialized = false;
     this.lastAutomaticJsonlMigration = null;
   }
@@ -46695,6 +46825,38 @@ class SQLiteMemoryProvider {
   markMigration(version4, name) {
     this.requireDb().run("INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, ?)", [version4, name]);
   }
+  selectRecallCandidates(request, scopedRecords) {
+    const ftsQuery = buildFtsQuery(request);
+    if (!this.ftsAvailable || !ftsQuery) {
+      return { records: scopedRecords, usedFts: false };
+    }
+    const scopedIds = new Set(scopedRecords.map((record3) => record3.id));
+    if (scopedIds.size === 0) {
+      return { records: [], usedFts: true, ftsOrder: new Map };
+    }
+    try {
+      const rows = this.requireDb().query(`SELECT id, bm25(${FTS_TABLE_NAME}) AS rank
+					FROM ${FTS_TABLE_NAME}
+					WHERE ${FTS_TABLE_NAME} MATCH ?
+						AND id IN (SELECT value FROM json_each(?))
+					ORDER BY rank ASC
+					LIMIT ?`).all(ftsQuery, JSON.stringify(Array.from(scopedIds)), Math.max(100, request.maxItems * 20));
+      const ftsOrder = new Map;
+      for (const row of rows) {
+        if (!scopedIds.has(row.id))
+          continue;
+        ftsOrder.set(row.id, ftsOrder.size);
+      }
+      if (ftsOrder.size === 0 && (request.mode ?? "manual") === "manual") {
+        return { records: scopedRecords, usedFts: false };
+      }
+      const records = scopedRecords.filter((record3) => ftsOrder.has(record3.id));
+      return { records, usedFts: true, ftsOrder };
+    } catch {
+      this.ftsAvailable = false;
+      return { records: scopedRecords, usedFts: false };
+    }
+  }
   runMigrations() {
     const db = this.requireDb();
     db.run(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -46720,16 +46882,82 @@ class SQLiteMemoryProvider {
       apply();
     }
   }
+  initializeFtsIndex() {
+    const db = this.requireDb();
+    try {
+      if (!this.hasMigration(FTS_SCHEMA_MIGRATION_NAME)) {
+        this.recreateFtsIndex();
+        this.markMigration(FTS_SCHEMA_MIGRATION_VERSION, FTS_SCHEMA_MIGRATION_NAME);
+        this.insertEvent("migration", String(FTS_SCHEMA_MIGRATION_VERSION), FTS_SCHEMA_MIGRATION_NAME);
+      } else {
+        db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS ${FTS_TABLE_NAME} USING fts5(
+					${ftsCreateColumnsSql()}
+				)`);
+      }
+      this.ftsAvailable = true;
+      const validMemoryCount = this.countValidMemoryRows();
+      const ftsCount = db.query(`SELECT COUNT(*) AS count FROM ${FTS_TABLE_NAME}`).get()?.count ?? 0;
+      if (validMemoryCount !== ftsCount) {
+        this.rebuildFtsIndex();
+      }
+      return true;
+    } catch {
+      this.ftsAvailable = false;
+      return false;
+    }
+  }
+  recreateFtsIndex() {
+    const db = this.requireDb();
+    const recreate = db.transaction(() => {
+      db.run(`DROP TABLE IF EXISTS ${FTS_TABLE_NAME}`);
+      db.run(`CREATE VIRTUAL TABLE ${FTS_TABLE_NAME} USING fts5(
+				${ftsCreateColumnsSql()}
+			)`);
+    });
+    recreate();
+  }
+  rebuildFtsIndex() {
+    const db = this.requireDb();
+    const rebuild = db.transaction(() => {
+      db.run(`DELETE FROM ${FTS_TABLE_NAME}`);
+      for (const row of this.iterateMemoryRows()) {
+        const record3 = this.parseMemoryRow(row);
+        if (record3) {
+          this.writeMemoryFts(record3);
+        }
+      }
+    });
+    rebuild();
+  }
+  countValidMemoryRows() {
+    let count = 0;
+    for (const row of this.iterateMemoryRows()) {
+      if (this.parseMemoryRow(row))
+        count++;
+    }
+    return count;
+  }
+  *iterateMemoryRows() {
+    yield* this.requireDb().query("SELECT id, record_json FROM memory_items").iterate();
+  }
+  parseMemoryRow(row) {
+    try {
+      return validateMemoryRecordRules(JSON.parse(row.record_json), {
+        rejectDurableSecrets: this.config.redaction.rejectDurableSecrets
+      });
+    } catch {
+      return null;
+    }
+  }
   loadMemories() {
     const rows = this.requireDb().query("SELECT id, record_json FROM memory_items ORDER BY updated_at ASC").all();
     const records = [];
     let invalidCount = 0;
     for (const row of rows) {
-      try {
-        records.push(validateMemoryRecordRules(JSON.parse(row.record_json), {
-          rejectDurableSecrets: this.config.redaction.rejectDurableSecrets
-        }));
-      } catch {
+      const record3 = this.parseMemoryRow(row);
+      if (record3) {
+        records.push(record3);
+      } else {
         invalidCount++;
       }
     }
@@ -46774,6 +47002,29 @@ class SQLiteMemoryProvider {
       record3.metadata.deleted === true ? 1 : 0,
       JSON.stringify(record3)
     ]);
+    this.writeMemoryFts(record3);
+  }
+  writeMemoryFts(record3) {
+    if (!this.ftsAvailable)
+      return;
+    try {
+      const db = this.requireDb();
+      db.run(`DELETE FROM ${FTS_TABLE_NAME} WHERE id = ?`, [record3.id]);
+      db.run(`INSERT INTO ${FTS_TABLE_NAME} (
+					${FTS_INSERT_COLUMNS.join(", ")}
+				) VALUES (${FTS_INSERT_COLUMNS.map(() => "?").join(", ")})`, [record3.id, ...ftsColumnValues(record3)]);
+    } catch {
+      this.ftsAvailable = false;
+    }
+  }
+  deleteMemoryFts(id) {
+    if (!this.ftsAvailable)
+      return;
+    try {
+      this.requireDb().run(`DELETE FROM ${FTS_TABLE_NAME} WHERE id = ?`, [id]);
+    } catch {
+      this.ftsAvailable = false;
+    }
   }
   writeProposal(proposal) {
     this.requireDb().run(`INSERT OR REPLACE INTO memory_proposals (
@@ -46974,7 +47225,69 @@ class SQLiteMemoryProvider {
 function splitSql(sql) {
   return sql.split(";").map((statement) => statement.trim()).filter(Boolean);
 }
-var _DatabaseCtor2 = null, MIGRATIONS2;
+function buildFtsQuery(request) {
+  const text = request.mode === "injection" && request.task ? `${request.task}
+${request.query}` : `${request.query}
+${request.task ?? ""}`;
+  const terms = Array.from(extractFtsTerms(text)).slice(0, 40);
+  if (terms.length === 0)
+    return null;
+  return terms.map((term) => `"${term}"`).join(" OR ");
+}
+function extractFtsTerms(text) {
+  const terms = new Set;
+  for (const match of text.toLowerCase().matchAll(/[a-z0-9_]{2,}/g)) {
+    const term = match[0];
+    if (FTS_STOP_WORDS.has(term))
+      continue;
+    if (term.length < 3 && !/^\d+$/.test(term))
+      continue;
+    terms.add(term);
+  }
+  return terms;
+}
+function ftsCreateColumnsSql() {
+  return [
+    "id UNINDEXED",
+    ...FTS_INDEX_COLUMNS.map((column) => column.name)
+  ].join(`,
+				`);
+}
+function ftsColumnValues(record3) {
+  return FTS_INDEX_COLUMNS.map((column) => column.value(record3));
+}
+function collectMetadataSearchStrings(metadata, keys) {
+  const values = [];
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string") {
+      values.push(value);
+      continue;
+    }
+    if (!Array.isArray(value))
+      continue;
+    for (const item of value) {
+      if (typeof item === "string")
+        values.push(item);
+    }
+  }
+  return values;
+}
+function rerankWithFts(items, ftsOrder) {
+  const denominator = Math.max(ftsOrder.size, 1);
+  return items.map((item) => {
+    const order = ftsOrder.get(item.record.id);
+    if (order === undefined)
+      return item;
+    const ftsBoost = (denominator - order) / denominator * 0.08;
+    return {
+      ...item,
+      score: item.score + ftsBoost,
+      reason: `${item.reason}, fts_rank=${order + 1}`
+    };
+  }).sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id));
+}
+var _DatabaseCtor2 = null, FTS_SCHEMA_MIGRATION_VERSION = 3, FTS_SCHEMA_MIGRATION_NAME = "create_memory_fts5_shadow_index", FTS_TABLE_NAME = "memory_items_fts", FTS_INDEX_COLUMNS, FTS_INSERT_COLUMNS, MIGRATIONS2, FTS_STOP_WORDS;
 var init_sqlite_provider = __esm(() => {
   init_utils2();
   init_config3();
@@ -46983,6 +47296,45 @@ var init_sqlite_provider = __esm(() => {
   init_jsonl_migration();
   init_schema2();
   init_scoring();
+  FTS_INDEX_COLUMNS = [
+    {
+      name: "text",
+      value: (record3) => record3.text
+    },
+    {
+      name: "tags",
+      value: (record3) => record3.tags.join(" ")
+    },
+    {
+      name: "kind",
+      value: (record3) => record3.kind.replace(/_/g, " ")
+    },
+    {
+      name: "source_file_path",
+      value: (record3) => record3.source.filePath ?? ""
+    },
+    {
+      name: "source_ref",
+      value: (record3) => record3.source.ref ?? ""
+    },
+    {
+      name: "metadata_symbols",
+      value: (record3) => collectMetadataSearchStrings(record3.metadata, ["symbol", "symbols"]).join(" ")
+    },
+    {
+      name: "metadata_files",
+      value: (record3) => collectMetadataSearchStrings(record3.metadata, [
+        "file",
+        "filePath",
+        "files",
+        "touchedFiles"
+      ]).join(" ")
+    }
+  ];
+  FTS_INSERT_COLUMNS = [
+    "id",
+    ...FTS_INDEX_COLUMNS.map((column) => column.name)
+  ];
   MIGRATIONS2 = [
     {
       version: 1,
@@ -47032,6 +47384,37 @@ var init_sqlite_provider = __esm(() => {
 		`
     }
   ];
+  FTS_STOP_WORDS = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "goal",
+    "how",
+    "in",
+    "into",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "role",
+    "task",
+    "that",
+    "the",
+    "this",
+    "to",
+    "user",
+    "what",
+    "when",
+    "with"
+  ]);
 });
 
 // src/memory/gateway.ts
@@ -47080,11 +47463,6 @@ var init_agent_output_schema = __esm(() => {
   CuratorOutputMemoryDecisionSchema = exports_external.object({
     curatorMemoryDecisions: exports_external.array(CuratorMemoryDecisionSchema).max(20).optional()
   }).passthrough();
-});
-
-// src/memory/role-profiles.ts
-var init_role_profiles = __esm(() => {
-  init_schema();
 });
 
 // src/memory/recall-planner.ts
