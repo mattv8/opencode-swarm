@@ -243,6 +243,7 @@ describe('SQLiteMemoryProvider', () => {
 			expect(tables).toEqual(
 				expect.arrayContaining([
 					'memory_items',
+					'memory_items_fts',
 					'memory_proposals',
 					'memory_events',
 					'memory_recall_usage',
@@ -350,4 +351,215 @@ describe('SQLiteMemoryProvider', () => {
 			db.close();
 		}
 	});
+
+	test('recalls SQLite FTS candidates from source refs, symbols, and files', async () => {
+		const root = await providerRoot('sqlite-fts-fields');
+		const provider = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		const record = makeSearchRecord({
+			text: 'Hybrid recall stores searchable structured fields.',
+			source: { type: 'manual', ref: 'PR7-FTS-hybrid-recall' },
+			metadata: {
+				symbols: ['HybridRecallPlanner'],
+				files: ['src/memory/sqlite-provider.ts'],
+			},
+		});
+		const unrelated = makeSearchRecord({
+			text: 'General package manager convention.',
+			tags: ['package'],
+			source: { type: 'file', filePath: 'package.json' },
+			metadata: { files: ['package.json'] },
+		});
+		await provider.upsert(record);
+		await provider.upsert(unrelated);
+
+		const results = await provider.recall({
+			query: 'HybridRecallPlanner PR7 FTS src/memory/sqlite-provider.ts',
+			task: 'Implement HybridRecallPlanner in src/memory/sqlite-provider.ts',
+			mode: 'injection',
+			scopes: [record.scope],
+			kinds: ['code_pattern', 'repo_convention'],
+			maxItems: 5,
+			tokenBudget: 1000,
+			minScore: 0,
+			requireQuerySignal: true,
+		});
+
+		expect(results.map((item) => item.record.id)).toEqual([record.id]);
+		expect(results[0]?.reason).toContain('fts_rank=1');
+		expect(results[0]?.signals.symbolOverlap).toBeGreaterThan(0);
+		expect(results[0]?.signals.fileOverlap).toBeGreaterThan(0);
+	});
+
+	test('evaluation fixture ranks file-specific recall ahead of broad PR2-style scoring noise', async () => {
+		const root = await providerRoot('sqlite-fts-eval');
+		const provider = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		const fileSpecific = makeSearchRecord({
+			text: 'SQLiteMemoryProvider FTS recall tests must cover metadata files.',
+			tags: ['memory', 'fts'],
+			source: { type: 'file', filePath: 'src/memory/sqlite-provider.ts' },
+			metadata: {
+				files: ['src/memory/sqlite-provider.ts'],
+				symbols: ['SQLiteMemoryProvider'],
+			},
+			confidence: 0.75,
+		});
+		const broadButIrrelevant = makeSearchRecord({
+			text: 'SQLite memory provider defaults use WAL and busy timeouts.',
+			tags: ['memory', 'sqlite'],
+			source: { type: 'file', filePath: 'src/memory/config.ts' },
+			metadata: { files: ['src/memory/config.ts'] },
+			confidence: 1,
+		});
+		await provider.upsert(broadButIrrelevant);
+		await provider.upsert(fileSpecific);
+
+		const results = await provider.recall({
+			query: 'SQLite memory provider FTS recall',
+			task: 'Implement PR7 in src/memory/sqlite-provider.ts with FTS recall tests',
+			mode: 'injection',
+			agentRole: 'coder',
+			scopes: [fileSpecific.scope],
+			kinds: ['code_pattern', 'repo_convention'],
+			maxItems: 1,
+			tokenBudget: 1000,
+			minScore: 0,
+			requireQuerySignal: true,
+		});
+
+		expect(results.map((item) => item.record.id)).toEqual([fileSpecific.id]);
+		expect(results[0]?.score).toBeGreaterThan(0);
+	});
+
+	test('filters scope before limiting FTS candidates', async () => {
+		const root = await providerRoot('sqlite-fts-scope-limit');
+		const provider = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		for (let i = 0; i < 110; i++) {
+			await provider.upsert(
+				makeSearchRecord({
+					scope: { type: 'repository', repoId: `repo-other-${i}` },
+					text: `Needle out-of-scope memory ${i}.`,
+					tags: ['needle'],
+				}),
+			);
+		}
+		const target = makeSearchRecord({
+			scope: { type: 'repository', repoId: 'repo-target' },
+			text: 'Needle in-scope memory survives FTS candidate limiting.',
+			tags: ['needle'],
+		});
+		await provider.upsert(target);
+
+		const results = await provider.recall({
+			query: 'needle',
+			mode: 'injection',
+			scopes: [target.scope],
+			kinds: ['code_pattern'],
+			maxItems: 1,
+			tokenBudget: 1000,
+			minScore: 0,
+			requireQuerySignal: true,
+		});
+
+		expect(results.map((item) => item.record.id)).toEqual([target.id]);
+	});
+
+	test('falls back to shared scoring when the FTS table is unavailable', async () => {
+		const root = await providerRoot('sqlite-fts-fallback');
+		const provider = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		const record = makeSearchRecord({
+			text: 'Fallback recall still works when FTS is unavailable.',
+			tags: ['fallback'],
+		});
+		await provider.upsert(record);
+		const dbPath = path.join(root, '.swarm', 'memory', 'memory.db');
+		const db = new Database(dbPath);
+		try {
+			db.run('DROP TABLE memory_items_fts');
+		} finally {
+			db.close();
+		}
+
+		const results = await provider.recall({
+			query: 'fallback recall',
+			scopes: [record.scope],
+			maxItems: 5,
+			tokenBudget: 1000,
+			minScore: 0,
+		});
+
+		expect(results.map((item) => item.record.id)).toEqual([record.id]);
+		expect(results[0]?.reason).not.toContain('fts_rank=');
+	});
+
+	test('rebuilds the FTS shadow index for existing SQLite rows', async () => {
+		const root = await providerRoot('sqlite-fts-rebuild');
+		const provider = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		const record = makeSearchRecord({
+			text: 'Existing SQLite rows are rebuilt into FTS on startup.',
+			tags: ['rebuild'],
+			metadata: { files: ['src/memory/sqlite-provider.ts'] },
+		});
+		await provider.upsert(record);
+		provider.close?.();
+		const dbPath = path.join(root, '.swarm', 'memory', 'memory.db');
+		const db = new Database(dbPath);
+		try {
+			db.run('DROP TABLE memory_items_fts');
+		} finally {
+			db.close();
+		}
+		const reopened = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+
+		const results = await reopened.recall({
+			query: 'existing rows rebuild src/memory/sqlite-provider.ts',
+			mode: 'injection',
+			scopes: [record.scope],
+			kinds: ['code_pattern'],
+			maxItems: 5,
+			tokenBudget: 1000,
+			minScore: 0,
+			requireQuerySignal: true,
+		});
+
+		expect(results.map((item) => item.record.id)).toEqual([record.id]);
+		expect(results[0]?.reason).toContain('fts_rank=1');
+	});
 });
+
+function makeSearchRecord(overrides: Partial<MemoryRecord>): MemoryRecord {
+	const scope =
+		overrides.scope ?? ({ type: 'repository', repoId: 'repo-search' } as const);
+	const kind = overrides.kind ?? ('code_pattern' as const);
+	const text = overrides.text ?? 'Searchable memory record.';
+	const base = { scope, kind, text };
+	return {
+		id: createMemoryId(base),
+		...base,
+		tags: overrides.tags ?? ['memory'],
+		confidence: overrides.confidence ?? 0.9,
+		stability: overrides.stability ?? 'durable',
+		source:
+			overrides.source ??
+			({ type: 'file', filePath: 'src/memory/sqlite-provider.ts' } as const),
+		createdAt: overrides.createdAt ?? '2026-05-24T12:00:00.000Z',
+		updatedAt: overrides.updatedAt ?? '2026-05-24T12:00:00.000Z',
+		lastAccessedAt: overrides.lastAccessedAt,
+		expiresAt: overrides.expiresAt,
+		supersedes: overrides.supersedes,
+		supersededBy: overrides.supersededBy,
+		contentHash: computeMemoryContentHash(base),
+		metadata: overrides.metadata ?? {},
+	};
+}

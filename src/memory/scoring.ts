@@ -1,3 +1,4 @@
+import { resolveMemoryRecallProfile } from './role-profiles';
 import { isExpired, stableScopeKey } from './schema';
 import type {
 	MemoryKind,
@@ -79,6 +80,13 @@ function kindProfileBoost(kind: MemoryKind, request: RecallRequest): number {
 	return request.kinds.includes(kind) ? 1 : 0;
 }
 
+function roleProfileBoost(kind: MemoryKind, request: RecallRequest): number {
+	if (!request.agentRole) return 0;
+	return resolveMemoryRecallProfile(request.agentRole).kinds.includes(kind)
+		? 1
+		: 0;
+}
+
 export function sameScope(a: MemoryScopeRef, b: MemoryScopeRef): boolean {
 	return stableScopeKey(a) === stableScopeKey(b);
 }
@@ -138,6 +146,28 @@ function scoreMemoryRecordDetailed(
 	const symbolTokens = tokenize(
 		collectMetadataStrings(record.metadata, ['symbol', 'symbols']).join(' '),
 	);
+	const searchableTaskTokens = tokenize(
+		[
+			record.text,
+			record.tags.join(' '),
+			normalizeKindText(record.kind),
+			record.source.filePath,
+			record.source.ref,
+			...collectMetadataStrings(record.metadata, [
+				'file',
+				'filePath',
+				'files',
+				'touchedFiles',
+				'symbol',
+				'symbols',
+			]),
+		]
+			.filter((value): value is string => typeof value === 'string')
+			.join(' '),
+	);
+	const taskTermOverlap = request.task
+		? overlap(tokenize(request.task), searchableTaskTokens)
+		: 0;
 	const kindQueryOverlap = overlap(
 		queryTokens,
 		tokenize(normalizeKindText(record.kind)),
@@ -164,20 +194,24 @@ function scoreMemoryRecordDetailed(
 	}
 
 	const score =
-		textOverlap * 0.45 +
-		tagOverlap * 0.2 +
-		fileOverlap * 0.05 +
-		symbolOverlap * 0.05 +
-		scopeSpecificityBoost(record.scope) * 0.15 +
-		kindProfileBoost(record.kind, request) * 0.1 +
-		record.confidence * 0.1;
+		textOverlap * 0.38 +
+		tagOverlap * 0.16 +
+		fileOverlap * 0.12 +
+		symbolOverlap * 0.08 +
+		taskTermOverlap * 0.08 +
+		scopeSpecificityBoost(record.scope) * 0.12 +
+		kindProfileBoost(record.kind, request) * 0.06 +
+		roleProfileBoost(record.kind, request) * 0.05 +
+		record.confidence * 0.08;
 
 	const reasonParts = [
 		textOverlap > 0 ? `text_overlap=${textOverlap.toFixed(2)}` : null,
 		tagOverlap > 0 ? `tag_overlap=${tagOverlap.toFixed(2)}` : null,
 		fileOverlap > 0 ? `file_overlap=${fileOverlap.toFixed(2)}` : null,
 		symbolOverlap > 0 ? `symbol_overlap=${symbolOverlap.toFixed(2)}` : null,
+		taskTermOverlap > 0 ? `task_terms=${taskTermOverlap.toFixed(2)}` : null,
 		kindQueryOverlap > 0 ? `kind_query=${kindQueryOverlap.toFixed(2)}` : null,
+		roleProfileBoost(record.kind, request) > 0 ? 'role_profile' : null,
 		`scope=${record.scope.type}`,
 		`confidence=${record.confidence.toFixed(2)}`,
 	].filter(Boolean);
