@@ -337,20 +337,10 @@ export class SQLiteMemoryProvider
 		const reranked = candidates.ftsOrder
 			? rerankWithFts(result.items, candidates.ftsOrder)
 			: result.items;
-		const diagnostics = {
-			...result.diagnostics,
-			candidateCount: candidates.usedFts
-				? scopedRecords.length
-				: result.diagnostics.candidateCount,
-			noSignalCount: candidates.usedFts
-				? result.diagnostics.noSignalCount +
-					Math.max(0, scopedRecords.length - candidates.records.length)
-				: result.diagnostics.noSignalCount,
-		};
 		return {
 			items: reranked.slice(0, request.maxItems),
 			diagnostics: {
-				...diagnostics,
+				...result.diagnostics,
 				returnedCount: Math.min(reranked.length, request.maxItems),
 			},
 		};
@@ -581,19 +571,14 @@ export class SQLiteMemoryProvider
 				)`);
 			}
 			this.ftsAvailable = true;
-			const memoryCount =
-				db
-					.query<{ count: number }, []>(
-						'SELECT COUNT(*) AS count FROM memory_items',
-					)
-					.get()?.count ?? 0;
+			const validMemoryCount = this.countValidMemoryRows();
 			const ftsCount =
 				db
 					.query<{ count: number }, []>(
 						`SELECT COUNT(*) AS count FROM ${FTS_TABLE_NAME}`,
 					)
 					.get()?.count ?? 0;
-			if (memoryCount !== ftsCount) {
+			if (validMemoryCount !== ftsCount) {
 				this.rebuildFtsIndex();
 			}
 			return true;
@@ -616,26 +601,40 @@ export class SQLiteMemoryProvider
 
 	private rebuildFtsIndex(): void {
 		const db = this.requireDb();
-		const rows = db
-			.query<MemoryItemRow, []>('SELECT id, record_json FROM memory_items')
-			.all();
 		const rebuild = db.transaction(() => {
 			db.run(`DELETE FROM ${FTS_TABLE_NAME}`);
-			for (const row of rows) {
-				try {
-					const record = validateMemoryRecordRules(
-						JSON.parse(row.record_json),
-						{
-							rejectDurableSecrets: this.config.redaction.rejectDurableSecrets,
-						},
-					);
+			for (const row of this.iterateMemoryRows()) {
+				const record = this.parseMemoryRow(row);
+				if (record) {
 					this.writeMemoryFts(record);
-				} catch {
-					// Invalid rows are reported by loadMemories(); skip them in the FTS shadow index.
 				}
 			}
 		});
 		rebuild();
+	}
+
+	private countValidMemoryRows(): number {
+		let count = 0;
+		for (const row of this.iterateMemoryRows()) {
+			if (this.parseMemoryRow(row)) count++;
+		}
+		return count;
+	}
+
+	private *iterateMemoryRows(): IterableIterator<MemoryItemRow> {
+		yield* this.requireDb()
+			.query<MemoryItemRow, []>('SELECT id, record_json FROM memory_items')
+			.iterate();
+	}
+
+	private parseMemoryRow(row: MemoryItemRow): MemoryRecord | null {
+		try {
+			return validateMemoryRecordRules(JSON.parse(row.record_json), {
+				rejectDurableSecrets: this.config.redaction.rejectDurableSecrets,
+			});
+		} catch {
+			return null;
+		}
 	}
 
 	private loadMemories(): { records: MemoryRecord[]; invalidCount: number } {
@@ -647,13 +646,10 @@ export class SQLiteMemoryProvider
 		const records: MemoryRecord[] = [];
 		let invalidCount = 0;
 		for (const row of rows) {
-			try {
-				records.push(
-					validateMemoryRecordRules(JSON.parse(row.record_json), {
-						rejectDurableSecrets: this.config.redaction.rejectDurableSecrets,
-					}),
-				);
-			} catch {
+			const record = this.parseMemoryRow(row);
+			if (record) {
+				records.push(record);
+			} else {
 				invalidCount++;
 			}
 		}

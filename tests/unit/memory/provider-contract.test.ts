@@ -431,7 +431,7 @@ describe('SQLiteMemoryProvider', () => {
 		});
 		await provider.upsert(record);
 
-		const results = await provider.recall({
+		const result = await provider.recallWithDiagnostics?.({
 			query: 'missingterm',
 			mode: 'injection',
 			scopes: [record.scope],
@@ -442,7 +442,12 @@ describe('SQLiteMemoryProvider', () => {
 			requireQuerySignal: false,
 		});
 
-		expect(results).toEqual([]);
+		expect(result?.items).toEqual([]);
+		expect(result?.diagnostics).toMatchObject({
+			candidateCount: 0,
+			noSignalCount: 0,
+			returnedCount: 0,
+		});
 	});
 
 	test('evaluation fixture ranks file-specific recall ahead of broad PR2-style scoring noise', async () => {
@@ -588,6 +593,59 @@ describe('SQLiteMemoryProvider', () => {
 
 		expect(results.map((item) => item.record.id)).toEqual([record.id]);
 		expect(results[0]?.reason).toContain('fts_rank=1');
+	});
+
+	test('compares FTS rebuild counts against valid rows only', async () => {
+		const root = await providerRoot('sqlite-fts-invalid-row-count');
+		const provider = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		const record = makeSearchRecord({
+			text: 'Valid rows stay searchable when invalid SQLite rows exist.',
+			tags: ['valid-row'],
+		});
+		await provider.upsert(record);
+		provider.close?.();
+		const dbPath = path.join(root, '.swarm', 'memory', 'memory.db');
+		const db = new Database(dbPath);
+		try {
+			db.run(
+				`INSERT INTO memory_items (
+					id,
+					scope_key,
+					kind,
+					updated_at,
+					deleted,
+					record_json
+				) VALUES (?, ?, ?, ?, ?, ?)`,
+				[
+					'mem_0000000000000000',
+					JSON.stringify(record.scope),
+					record.kind,
+					record.updatedAt,
+					0,
+					'{"not":"a valid memory"}',
+				],
+			);
+		} finally {
+			db.close();
+		}
+		const reopened = track(
+			new SQLiteMemoryProvider(root, { enabled: true, provider: 'sqlite' }),
+		);
+		await reopened.initialize();
+		reopened.close?.();
+		const verifyDb = new Database(dbPath, { readonly: true });
+		try {
+			const ftsCount = verifyDb
+				.query<{ count: number }, []>(
+					'SELECT COUNT(*) AS count FROM memory_items_fts',
+				)
+				.get()?.count;
+			expect(ftsCount).toBe(1);
+		} finally {
+			verifyDb.close();
+		}
 	});
 });
 

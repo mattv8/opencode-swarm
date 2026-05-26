@@ -53,6 +53,9 @@ export declare class SQLiteMemoryProvider implements MemoryProvider, MemoryPropo
     private initializeFtsIndex;
     private recreateFtsIndex;
     private rebuildFtsIndex;
+    private countValidMemoryRows;
+    private iterateMemoryRows;
+    private parseMemoryRow;
     private loadMemories;
     private loadProposals;
     private writeMemory;

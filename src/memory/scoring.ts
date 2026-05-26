@@ -17,6 +17,12 @@ export interface RecallScoringDiagnostics {
 	belowThresholdCount: number;
 }
 
+interface RecallScoringContext {
+	taskTokens?: Set<string>;
+	queryTokens: Set<string>;
+	roleProfileKinds?: Set<MemoryKind>;
+}
+
 function tokenize(text: string): Set<string> {
 	return new Set(
 		text
@@ -80,11 +86,11 @@ function kindProfileBoost(kind: MemoryKind, request: RecallRequest): number {
 	return request.kinds.includes(kind) ? 1 : 0;
 }
 
-function roleProfileBoost(kind: MemoryKind, request: RecallRequest): number {
-	if (!request.agentRole) return 0;
-	return resolveMemoryRecallProfile(request.agentRole).kinds.includes(kind)
-		? 1
-		: 0;
+function roleProfileBoost(
+	kind: MemoryKind,
+	context: RecallScoringContext,
+): number {
+	return context.roleProfileKinds?.has(kind) ? 1 : 0;
 }
 
 export function sameScope(a: MemoryScopeRef, b: MemoryScopeRef): boolean {
@@ -102,13 +108,18 @@ export function scoreMemoryRecord(
 	record: MemoryRecord,
 	request: RecallRequest,
 ): RecallResultItem | null {
-	const result = scoreMemoryRecordDetailed(record, request);
+	const result = scoreMemoryRecordDetailed(
+		record,
+		request,
+		createScoringContext(request),
+	);
 	return result.item;
 }
 
 function scoreMemoryRecordDetailed(
 	record: MemoryRecord,
 	request: RecallRequest,
+	context: RecallScoringContext,
 ): { item: RecallResultItem | null; skipReason?: 'filtered' | 'no_signal' } {
 	if (!request.includeExpired && isExpired(record)) {
 		return { item: null, skipReason: 'filtered' };
@@ -125,9 +136,9 @@ function scoreMemoryRecordDetailed(
 	}
 
 	const queryTokens =
-		request.mode === 'injection' && request.task
-			? tokenize(request.task)
-			: tokenize(request.query);
+		request.mode === 'injection' && context.taskTokens
+			? context.taskTokens
+			: context.queryTokens;
 	const textTokens = tokenize(record.text);
 	const tagTokens = tokenize(record.tags.join(' '));
 	const fileTokens = tokenize(
@@ -146,38 +157,27 @@ function scoreMemoryRecordDetailed(
 	const symbolTokens = tokenize(
 		collectMetadataStrings(record.metadata, ['symbol', 'symbols']).join(' '),
 	);
-	const searchableTaskTokens = tokenize(
-		[
-			record.text,
-			record.tags.join(' '),
-			normalizeKindText(record.kind),
-			record.source.filePath,
-			record.source.ref,
-			...collectMetadataStrings(record.metadata, [
-				'file',
-				'filePath',
-				'files',
-				'touchedFiles',
-				'symbol',
-				'symbols',
-			]),
-		]
-			.filter((value): value is string => typeof value === 'string')
-			.join(' '),
+	const kindTokens = tokenize(normalizeKindText(record.kind));
+	const sourceRefTokens = tokenize(record.source.ref ?? '');
+	const taskSearchTokens = unionTokens(
+		textTokens,
+		tagTokens,
+		fileTokens,
+		symbolTokens,
+		kindTokens,
+		sourceRefTokens,
 	);
-	const taskTermOverlap = request.task
-		? overlap(tokenize(request.task), searchableTaskTokens)
+	const taskTermOverlap = context.taskTokens
+		? overlap(context.taskTokens, taskSearchTokens)
 		: 0;
-	const kindQueryOverlap = overlap(
-		queryTokens,
-		tokenize(normalizeKindText(record.kind)),
-	);
+	const kindQueryOverlap = overlap(queryTokens, kindTokens);
 	const textOverlap = overlap(queryTokens, textTokens);
 	const tagOverlap = overlap(queryTokens, tagTokens);
 	const fileOverlap = overlap(queryTokens, fileTokens);
 	const symbolOverlap = overlap(queryTokens, symbolTokens);
 	const kindMatch = request.kinds?.includes(record.kind) ?? false;
 	const scopeMatch = scopeAllowed(record.scope, request.scopes);
+	const roleBoost = roleProfileBoost(record.kind, context);
 	const hasQuerySignal =
 		textOverlap > 0 ||
 		tagOverlap > 0 ||
@@ -201,7 +201,7 @@ function scoreMemoryRecordDetailed(
 		taskTermOverlap * 0.08 +
 		scopeSpecificityBoost(record.scope) * 0.12 +
 		kindProfileBoost(record.kind, request) * 0.06 +
-		roleProfileBoost(record.kind, request) * 0.05 +
+		roleBoost * 0.05 +
 		record.confidence * 0.08;
 
 	const reasonParts = [
@@ -211,7 +211,7 @@ function scoreMemoryRecordDetailed(
 		symbolOverlap > 0 ? `symbol_overlap=${symbolOverlap.toFixed(2)}` : null,
 		taskTermOverlap > 0 ? `task_terms=${taskTermOverlap.toFixed(2)}` : null,
 		kindQueryOverlap > 0 ? `kind_query=${kindQueryOverlap.toFixed(2)}` : null,
-		roleProfileBoost(record.kind, request) > 0 ? 'role_profile' : null,
+		roleBoost > 0 ? 'role_profile' : null,
 		`scope=${record.scope.type}`,
 		`confidence=${record.confidence.toFixed(2)}`,
 	].filter(Boolean);
@@ -245,6 +245,7 @@ export function scoreMemoryRecordsWithDiagnostics(
 	request: RecallRequest,
 ): { items: RecallResultItem[]; diagnostics: RecallScoringDiagnostics } {
 	const minScore = request.minScore ?? 0;
+	const context = createScoringContext(request);
 	const diagnostics: RecallScoringDiagnostics = {
 		candidateCount: records.length,
 		preScoredFilteredCount: 0,
@@ -256,7 +257,7 @@ export function scoreMemoryRecordsWithDiagnostics(
 	const items: RecallResultItem[] = [];
 
 	for (const record of records) {
-		const result = scoreMemoryRecordDetailed(record, request);
+		const result = scoreMemoryRecordDetailed(record, request, context);
 		if (!result.item) {
 			if (result.skipReason === 'filtered')
 				diagnostics.preScoredFilteredCount++;
@@ -276,4 +277,23 @@ export function scoreMemoryRecordsWithDiagnostics(
 	);
 	diagnostics.returnedCount = items.length;
 	return { items, diagnostics };
+}
+
+function createScoringContext(request: RecallRequest): RecallScoringContext {
+	const taskTokens = request.task ? tokenize(request.task) : undefined;
+	return {
+		taskTokens,
+		queryTokens: tokenize(request.query),
+		roleProfileKinds: request.agentRole
+			? new Set(resolveMemoryRecallProfile(request.agentRole).kinds)
+			: undefined,
+	};
+}
+
+function unionTokens(...sets: Set<string>[]): Set<string> {
+	const union = new Set<string>();
+	for (const set of sets) {
+		for (const token of set) union.add(token);
+	}
+	return union;
 }

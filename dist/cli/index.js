@@ -46508,10 +46508,8 @@ function kindProfileBoost(kind, request) {
     return 0.5;
   return request.kinds.includes(kind) ? 1 : 0;
 }
-function roleProfileBoost(kind, request) {
-  if (!request.agentRole)
-    return 0;
-  return resolveMemoryRecallProfile(request.agentRole).kinds.includes(kind) ? 1 : 0;
+function roleProfileBoost(kind, context) {
+  return context.roleProfileKinds?.has(kind) ? 1 : 0;
 }
 function sameScope(a, b) {
   return stableScopeKey(a) === stableScopeKey(b);
@@ -46519,7 +46517,7 @@ function sameScope(a, b) {
 function scopeAllowed(recordScope, allowedScopes) {
   return allowedScopes.some((scope) => sameScope(recordScope, scope));
 }
-function scoreMemoryRecordDetailed(record3, request) {
+function scoreMemoryRecordDetailed(record3, request, context) {
   if (!request.includeExpired && isExpired(record3)) {
     return { item: null, skipReason: "filtered" };
   }
@@ -46534,7 +46532,7 @@ function scoreMemoryRecordDetailed(record3, request) {
   if (request.kinds && !request.kinds.includes(record3.kind)) {
     return { item: null, skipReason: "filtered" };
   }
-  const queryTokens = request.mode === "injection" && request.task ? tokenize(request.task) : tokenize(request.query);
+  const queryTokens = request.mode === "injection" && context.taskTokens ? context.taskTokens : context.queryTokens;
   const textTokens = tokenize(record3.text);
   const tagTokens = tokenize(record3.tags.join(" "));
   const fileTokens = tokenize([
@@ -46547,34 +46545,23 @@ function scoreMemoryRecordDetailed(record3, request) {
     ])
   ].filter((value) => typeof value === "string").join(" "));
   const symbolTokens = tokenize(collectMetadataStrings(record3.metadata, ["symbol", "symbols"]).join(" "));
-  const searchableTaskTokens = tokenize([
-    record3.text,
-    record3.tags.join(" "),
-    normalizeKindText(record3.kind),
-    record3.source.filePath,
-    record3.source.ref,
-    ...collectMetadataStrings(record3.metadata, [
-      "file",
-      "filePath",
-      "files",
-      "touchedFiles",
-      "symbol",
-      "symbols"
-    ])
-  ].filter((value) => typeof value === "string").join(" "));
-  const taskTermOverlap = request.task ? overlap(tokenize(request.task), searchableTaskTokens) : 0;
-  const kindQueryOverlap = overlap(queryTokens, tokenize(normalizeKindText(record3.kind)));
+  const kindTokens = tokenize(normalizeKindText(record3.kind));
+  const sourceRefTokens = tokenize(record3.source.ref ?? "");
+  const taskSearchTokens = unionTokens(textTokens, tagTokens, fileTokens, symbolTokens, kindTokens, sourceRefTokens);
+  const taskTermOverlap = context.taskTokens ? overlap(context.taskTokens, taskSearchTokens) : 0;
+  const kindQueryOverlap = overlap(queryTokens, kindTokens);
   const textOverlap = overlap(queryTokens, textTokens);
   const tagOverlap = overlap(queryTokens, tagTokens);
   const fileOverlap = overlap(queryTokens, fileTokens);
   const symbolOverlap = overlap(queryTokens, symbolTokens);
   const kindMatch = request.kinds?.includes(record3.kind) ?? false;
   const scopeMatch = scopeAllowed(record3.scope, request.scopes);
+  const roleBoost = roleProfileBoost(record3.kind, context);
   const hasQuerySignal = textOverlap > 0 || tagOverlap > 0 || fileOverlap > 0 || symbolOverlap > 0 || kindQueryOverlap > 0;
   if (request.mode === "injection" && request.requireQuerySignal !== false && !hasQuerySignal) {
     return { item: null, skipReason: "no_signal" };
   }
-  const score = textOverlap * 0.38 + tagOverlap * 0.16 + fileOverlap * 0.12 + symbolOverlap * 0.08 + taskTermOverlap * 0.08 + scopeSpecificityBoost(record3.scope) * 0.12 + kindProfileBoost(record3.kind, request) * 0.06 + roleProfileBoost(record3.kind, request) * 0.05 + record3.confidence * 0.08;
+  const score = textOverlap * 0.38 + tagOverlap * 0.16 + fileOverlap * 0.12 + symbolOverlap * 0.08 + taskTermOverlap * 0.08 + scopeSpecificityBoost(record3.scope) * 0.12 + kindProfileBoost(record3.kind, request) * 0.06 + roleBoost * 0.05 + record3.confidence * 0.08;
   const reasonParts = [
     textOverlap > 0 ? `text_overlap=${textOverlap.toFixed(2)}` : null,
     tagOverlap > 0 ? `tag_overlap=${tagOverlap.toFixed(2)}` : null,
@@ -46582,7 +46569,7 @@ function scoreMemoryRecordDetailed(record3, request) {
     symbolOverlap > 0 ? `symbol_overlap=${symbolOverlap.toFixed(2)}` : null,
     taskTermOverlap > 0 ? `task_terms=${taskTermOverlap.toFixed(2)}` : null,
     kindQueryOverlap > 0 ? `kind_query=${kindQueryOverlap.toFixed(2)}` : null,
-    roleProfileBoost(record3.kind, request) > 0 ? "role_profile" : null,
+    roleBoost > 0 ? "role_profile" : null,
     `scope=${record3.scope.type}`,
     `confidence=${record3.confidence.toFixed(2)}`
   ].filter(Boolean);
@@ -46604,6 +46591,7 @@ function scoreMemoryRecordDetailed(record3, request) {
 }
 function scoreMemoryRecordsWithDiagnostics(records, request) {
   const minScore = request.minScore ?? 0;
+  const context = createScoringContext(request);
   const diagnostics = {
     candidateCount: records.length,
     preScoredFilteredCount: 0,
@@ -46614,7 +46602,7 @@ function scoreMemoryRecordsWithDiagnostics(records, request) {
   };
   const items = [];
   for (const record3 of records) {
-    const result = scoreMemoryRecordDetailed(record3, request);
+    const result = scoreMemoryRecordDetailed(record3, request, context);
     if (!result.item) {
       if (result.skipReason === "filtered")
         diagnostics.preScoredFilteredCount++;
@@ -46632,6 +46620,22 @@ function scoreMemoryRecordsWithDiagnostics(records, request) {
   items.sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id));
   diagnostics.returnedCount = items.length;
   return { items, diagnostics };
+}
+function createScoringContext(request) {
+  const taskTokens = request.task ? tokenize(request.task) : undefined;
+  return {
+    taskTokens,
+    queryTokens: tokenize(request.query),
+    roleProfileKinds: request.agentRole ? new Set(resolveMemoryRecallProfile(request.agentRole).kinds) : undefined
+  };
+}
+function unionTokens(...sets) {
+  const union3 = new Set;
+  for (const set3 of sets) {
+    for (const token of set3)
+      union3.add(token);
+  }
+  return union3;
 }
 var init_scoring = __esm(() => {
   init_role_profiles();
@@ -47218,15 +47222,10 @@ class SQLiteMemoryProvider {
     const candidates = this.selectRecallCandidates(request, scopedRecords);
     const result = scoreMemoryRecordsWithDiagnostics(candidates.records, request);
     const reranked = candidates.ftsOrder ? rerankWithFts(result.items, candidates.ftsOrder) : result.items;
-    const diagnostics = {
-      ...result.diagnostics,
-      candidateCount: candidates.usedFts ? scopedRecords.length : result.diagnostics.candidateCount,
-      noSignalCount: candidates.usedFts ? result.diagnostics.noSignalCount + Math.max(0, scopedRecords.length - candidates.records.length) : result.diagnostics.noSignalCount
-    };
     return {
       items: reranked.slice(0, request.maxItems),
       diagnostics: {
-        ...diagnostics,
+        ...result.diagnostics,
         returnedCount: Math.min(reranked.length, request.maxItems)
       }
     };
@@ -47390,9 +47389,9 @@ class SQLiteMemoryProvider {
 				)`);
       }
       this.ftsAvailable = true;
-      const memoryCount = db.query("SELECT COUNT(*) AS count FROM memory_items").get()?.count ?? 0;
+      const validMemoryCount = this.countValidMemoryRows();
       const ftsCount = db.query(`SELECT COUNT(*) AS count FROM ${FTS_TABLE_NAME}`).get()?.count ?? 0;
-      if (memoryCount !== ftsCount) {
+      if (validMemoryCount !== ftsCount) {
         this.rebuildFtsIndex();
       }
       return true;
@@ -47413,30 +47412,46 @@ class SQLiteMemoryProvider {
   }
   rebuildFtsIndex() {
     const db = this.requireDb();
-    const rows = db.query("SELECT id, record_json FROM memory_items").all();
     const rebuild = db.transaction(() => {
       db.run(`DELETE FROM ${FTS_TABLE_NAME}`);
-      for (const row of rows) {
-        try {
-          const record3 = validateMemoryRecordRules(JSON.parse(row.record_json), {
-            rejectDurableSecrets: this.config.redaction.rejectDurableSecrets
-          });
+      for (const row of this.iterateMemoryRows()) {
+        const record3 = this.parseMemoryRow(row);
+        if (record3) {
           this.writeMemoryFts(record3);
-        } catch {}
+        }
       }
     });
     rebuild();
+  }
+  countValidMemoryRows() {
+    let count = 0;
+    for (const row of this.iterateMemoryRows()) {
+      if (this.parseMemoryRow(row))
+        count++;
+    }
+    return count;
+  }
+  *iterateMemoryRows() {
+    yield* this.requireDb().query("SELECT id, record_json FROM memory_items").iterate();
+  }
+  parseMemoryRow(row) {
+    try {
+      return validateMemoryRecordRules(JSON.parse(row.record_json), {
+        rejectDurableSecrets: this.config.redaction.rejectDurableSecrets
+      });
+    } catch {
+      return null;
+    }
   }
   loadMemories() {
     const rows = this.requireDb().query("SELECT id, record_json FROM memory_items ORDER BY updated_at ASC").all();
     const records = [];
     let invalidCount = 0;
     for (const row of rows) {
-      try {
-        records.push(validateMemoryRecordRules(JSON.parse(row.record_json), {
-          rejectDurableSecrets: this.config.redaction.rejectDurableSecrets
-        }));
-      } catch {
+      const record3 = this.parseMemoryRow(row);
+      if (record3) {
+        records.push(record3);
+      } else {
         invalidCount++;
       }
     }
