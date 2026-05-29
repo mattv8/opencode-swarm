@@ -125,6 +125,25 @@ mock.module('../../../src/utils/path-security', () => ({
 }));
 ```
 
+## Diagnosing Test Isolation Failures
+
+When test files pass individually but fail when run together, follow this protocol:
+
+1. **Isolate**: Run the failing file alone: `bun test <file>.test.ts --timeout 30000`
+2. **Pair**: Run it WITH its suspected polluting neighbor: `bun test <fileA>.test.ts <fileB>.test.ts`
+3. **Classify**:
+   - Both pass alone → fail together → **mock pollution** from neighbor
+   - Fails alone → **test logic bug** (not isolation issue)
+   - Passes alone + passes together but fails in full suite → **third-file pollution** (use binary search across directory)
+4. **For mock pollution**, check the neighbor for these patterns:
+   - `vi.mock()` or `mock.module()` inside `beforeEach()` (not at top level)
+   - `delete require.cache[...]` combined with re-import pattern
+   - These indicate hoist-time closure capture — see below
+5. **Specific symptom — closure capture failure**: `vi.mock()` captures closures at **hoist time** (before `beforeEach` runs). Reassigning `mockFn.mockImplementation(newFn)` in the test body does **NOT** update the hoisted closure — the mock still calls the original function.
+   - Symptom: `expect(mockFn).toHaveBeenCalledTimes(N)` fails with an unexpected count
+   - Symptom: `expect(mockFn).not.toHaveBeenCalled()` fails because the real function was called
+6. **Fix path**: Migrate the affected test file to `_internals` DI seam pattern per the `mock-to-internals-migration` skill. This eliminates both the `vi.mock()` call and the closure capture surface area.
+
 ## Two-Tier Mock Convention
 
 The codebase uses a two-tier strategy for mock isolation, plus a zero-mock testing pattern:
@@ -422,6 +441,29 @@ When CI reports a `unit (ubuntu|macos|windows)` failure:
 - **Do not test framework behavior.** "Zod schema parses valid input" tests Zod, not your schema.
 - **Do not test test utilities.** If it only exists to support other tests, it doesn't need its own test.
 - **Do not mock everything.** If every dependency is mocked, you're testing the mock setup. Prefer real dependencies for pure functions and only mock I/O boundaries (filesystem, network, timers).
+
+### Anchored Content Assertions
+
+When asserting that skill files, protocol docs, or structured markdown contain expected text, **anchor your assertions to the relevant section** rather than using bare `toContain()` on the full file content:
+
+```typescript
+// WEAK — passes even if the word appears in prose outside the intended section
+expect(content).toContain('DROP');
+
+// STRONG — fails if the structured section is removed or relocated
+const stage3Start = content.indexOf('#### Stage 3: Consult Critic Sounding Board');
+const stage4Start = content.indexOf('#### Stage 4: Surface User Decision Packet');
+const stage3Section = content.slice(stage3Start, stage4Start);
+expect(stage3Section).toContain('DROP');
+expect(stage3Section).toContain('ASK_USER');
+```
+
+**Why this matters:** A bare `toContain('DROP')` passes as long as the word appears anywhere in the file. If the structured outcomes section is deleted but a prose reference remains (e.g., "The critic may DROP irrelevant items"), the test still passes — silently hiding the removal. Section-anchored assertions fail when the content is actually removed from its intended location.
+
+Use this pattern for:
+- Critic outcome mappings in skill files (DROP, ASK_USER, RESOLVE, REPHRASE)
+- Classification category lists (self_resolved, user_decision, etc.)
+- Any structured section where word presence is necessary but position-dependent
 - **Do not hardcode version numbers.** Version bumps are automated — a test asserting `version === '6.31.3'` breaks on every release.
 - **Do not use `sleep` or `setTimeout` for synchronization.** Use explicit signals, resolved promises, or `Bun.sleep()` with tight bounds.
 - **Do not spawn `cat /dev/zero`, `yes`, or other infinite-output commands.** Use `sleep 30` for "blocking command" tests.
