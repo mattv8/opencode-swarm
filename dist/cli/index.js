@@ -52414,10 +52414,33 @@ function classifyAndCluster(testResults, history) {
 }
 
 // src/test-impact/flaky-detector.ts
+function computeCombinedFlakyScore(recent) {
+  const totalRuns = recent.length;
+  if (totalRuns < 2) {
+    return { alternationCount: 0, flakyScore: 0 };
+  }
+  let alternationCount = 0;
+  let passCount = 0;
+  for (let i = 0;i < recent.length; i++) {
+    if (recent[i].result === "pass") {
+      passCount++;
+    }
+    if (i > 0 && recent[i].result !== recent[i - 1].result) {
+      alternationCount++;
+    }
+  }
+  const alternationScore = alternationCount / totalRuns;
+  const passRate = passCount / totalRuns;
+  const passRateVarianceScore = 4 * passRate * (1 - passRate);
+  return {
+    alternationCount,
+    flakyScore: (alternationScore + passRateVarianceScore) / 2
+  };
+}
 function detectFlakyTests(allHistory) {
   const grouped = new Map;
   for (const record3 of allHistory) {
-    const key = `${record3.testFile.toLowerCase()}|${record3.testName.toLowerCase()}`;
+    const key = `${record3.testFile.toLowerCase()}\x00${record3.testName.toLowerCase()}`;
     if (!grouped.has(key)) {
       grouped.set(key, {
         records: [],
@@ -52439,13 +52462,7 @@ function detectFlakyTests(allHistory) {
     if (totalRuns < 2) {
       continue;
     }
-    let alternationCount = 0;
-    for (let i = 1;i < recent.length; i++) {
-      if (recent[i].result !== recent[i - 1].result) {
-        alternationCount++;
-      }
-    }
-    const flakyScore = totalRuns >= 2 ? alternationCount / totalRuns : 0;
+    const { alternationCount, flakyScore } = computeCombinedFlakyScore(recent);
     const isQuarantined = flakyScore > FLAKY_THRESHOLD && totalRuns >= MIN_RUNS_FOR_QUARANTINE;
     const recentResults = recent.map((r) => r.result);
     const testFile = entry.originalFile;
