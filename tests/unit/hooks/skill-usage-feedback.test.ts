@@ -507,6 +507,40 @@ describe('applySkillUsageFeedback', () => {
 		expect(entries[0]!.confidence).toBeCloseTo(0.55); // 0.5 + 0.05
 	});
 
+	test('processed entry markers prevent marker-loss reapplication', async () => {
+		writeSwarmKnowledge(tempDir, [
+			{
+				id: 'idempotent-source-uuid',
+				lesson: 'idempotent feedback test entry',
+				confidence: 0.5,
+			},
+		]);
+		writeSkillFile(tempDir, '.claude/skills/idempotent-skill/SKILL.md', [
+			'idempotent-source-uuid',
+		]);
+		appendSkillUsageEntry(tempDir, {
+			skillPath: '.claude/skills/idempotent-skill/SKILL.md',
+			agentName: 'test-agent',
+			taskID: 'task-001',
+			timestamp: '2026-01-01T00:01:00.000Z',
+			complianceVerdict: 'compliant',
+			sessionID: 'session-abc',
+		});
+
+		const first = await applySkillUsageFeedback(tempDir);
+		const second = await applySkillUsageFeedback(tempDir);
+
+		expect(first).toEqual({ processed: 1, bumps: 1 });
+		expect(second).toEqual({ processed: 0, bumps: 0 });
+		expect(readSwarmKnowledge(tempDir)[0]!.confidence).toBeCloseTo(0.55);
+		expect(readSkillUsageEntries(tempDir)).toHaveLength(1);
+		const rawLog = fs.readFileSync(
+			path.join(tempDir, '.swarm', 'skill-usage.jsonl'),
+			'utf-8',
+		);
+		expect(rawLog).toContain('"type":"feedback_applied"');
+	});
+
 	test('violation entry → source knowledge confidence decreases', async () => {
 		writeSwarmKnowledge(tempDir, [
 			{
@@ -537,6 +571,43 @@ describe('applySkillUsageFeedback', () => {
 		const entries = readSwarmKnowledge(tempDir);
 		expect(entries).toHaveLength(1);
 		expect(entries[0]!.confidence).toBe(0.4); // 0.5 - 0.1
+	});
+
+	test('legacy violation entry is normalized and still decreases confidence', async () => {
+		writeSwarmKnowledge(tempDir, [
+			{
+				id: 'legacy-violation-source-uuid',
+				lesson: 'legacy violation test entry',
+				confidence: 0.5,
+			},
+		]);
+
+		writeSkillFile(tempDir, '.claude/skills/legacy-violation-skill/SKILL.md', [
+			'legacy-violation-source-uuid',
+		]);
+
+		writeRawLog(
+			tempDir,
+			`${JSON.stringify({
+				id: 'legacy-skill-usage-id',
+				skillPath: '.claude/skills/legacy-violation-skill/SKILL.md',
+				agentName: 'test-agent',
+				taskID: 'task-001',
+				timestamp: '2026-01-01T00:02:00.000Z',
+				complianceVerdict: 'violation',
+				sessionID: 'session-abc',
+			})}\n`,
+		);
+
+		expect(readSkillUsageEntries(tempDir)[0]!.complianceVerdict).toBe(
+			'violated',
+		);
+
+		const result = await applySkillUsageFeedback(tempDir);
+
+		expect(result.processed).toBe(1);
+		expect(result.bumps).toBe(1);
+		expect(readSwarmKnowledge(tempDir)[0]!.confidence).toBe(0.4);
 	});
 
 	test('mixed: 3 compliant + 1 violation → net positive delta (compliant > violation)', async () => {
@@ -943,11 +1014,9 @@ describe('computeComplianceByVersion (verdict vocabulary)', () => {
 		expect(agg.rate).toBeCloseTo(0.25); // 1 compliant / 4 total
 	});
 
-	test('"violation" (legacy) entries are NOT counted without read-path normalization', () => {
-		// This verifies that computeComplianceByVersion uses the canonical spelling.
-		// Raw entries with legacy 'violation' that bypass readSkillUsageEntries
-		// normalization should not be counted (they'd be caught by the read path
-		// in production).
+	test('"violation" (legacy) entries are counted after normalization', () => {
+		// Raw entries can reach this helper in tests and legacy callers. Keep the
+		// computation path defensive so legacy verdicts still count as violations.
 		const entries = [
 			{ ...makeEntry({ complianceVerdict: 'violation' }), id: 'v1' },
 			{ ...makeEntry({ complianceVerdict: 'compliant' }), id: 'c1' },
@@ -959,7 +1028,7 @@ describe('computeComplianceByVersion (verdict vocabulary)', () => {
 		);
 		const agg = stats.get(undefined)!;
 		expect(agg.total).toBe(2);
-		expect(agg.violation).toBe(0); // 'violation' ≠ 'violated'
+		expect(agg.violation).toBe(1);
 		expect(agg.compliant).toBe(1);
 	});
 });
