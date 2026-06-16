@@ -44,6 +44,10 @@ const CONFIG: KnowledgeConfig = {
 	default_max_phases: 10,
 	todo_max_phases: 3,
 	sweep_enabled: true,
+	enrichment: {
+		max_calls_per_day: 30,
+		quota_window: 'utc',
+	},
 };
 
 const LESSON =
@@ -86,6 +90,15 @@ function readEventsJsonl(dir: string): Array<Record<string, unknown>> {
 		.split('\n')
 		.filter((l) => l.trim())
 		.map((l) => JSON.parse(l));
+}
+
+function readQuotaState(
+	dir: string,
+	fileName: 'knowledge-enrichment-quota.json' | 'skill-improver-quota.json',
+): Record<string, unknown> | null {
+	const p = path.join(dir, '.swarm', fileName);
+	if (!fs.existsSync(p)) return null;
+	return JSON.parse(fs.readFileSync(p, 'utf-8')) as Record<string, unknown>;
 }
 
 describe('curator v3 enrichment + retry (Task 4.2)', () => {
@@ -193,7 +206,7 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 		// Pre-exhaust the quota: maxCalls=1, and a quota state already at 1 use
 		// (matches the QuotaState on-disk shape: date/calls_used/max_calls/window).
 		fs.writeFileSync(
-			path.join(dir, '.swarm', 'skill-improver-quota.json'),
+			path.join(dir, '.swarm', 'knowledge-enrichment-quota.json'),
 			JSON.stringify({
 				date: new Date().toISOString().slice(0, 10),
 				calls_used: 1,
@@ -219,6 +232,7 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 		);
 		expect(called).toBe(0);
 		expect(result.quarantined).toBe(1);
+		expect(readQuotaState(dir, 'skill-improver-quota.json')).toBeNull();
 	});
 
 	it('stores without any LLM call when the lesson-entry is already actionable via future structured inputs', async () => {
@@ -241,5 +255,54 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 		);
 		expect(result.stored).toBe(1);
 		expect(called).toBe(1); // single call sufficed — no retry
+	});
+
+	it('batches enrichment calls and only consumes knowledge-enrichment quota', async () => {
+		const lessons = Array.from(
+			{ length: 12 },
+			(_, i) => `Lesson ${i + 1}: always validate assumptions before coding`,
+		);
+		let calls = 0;
+		const mockDelegate = async (
+			_system: string,
+			userInput: string,
+		): Promise<string> => {
+			calls++;
+			const expectedLenMatch =
+				/The array length MUST be exactly (\d+)\./.exec(userInput);
+			const expectedLen = expectedLenMatch
+				? Number.parseInt(expectedLenMatch[1], 10)
+				: 0;
+			return JSON.stringify(
+				Array.from({ length: expectedLen }, () => ({
+					applies_to_agents: ['coder'],
+					required_actions: ['validate assumptions before coding'],
+					directive_priority: 'medium',
+				})),
+			);
+		};
+
+		const result = await curateAndStoreSwarm(
+			lessons,
+			'proj',
+			{ phase_number: 1 },
+			dir,
+			CONFIG,
+			{
+				llmDelegate: mockDelegate,
+				enrichmentQuota: { maxCalls: 30, window: 'utc' },
+			},
+		);
+
+		expect(result.stored).toBe(12);
+		expect(result.quarantined).toBe(0);
+		expect(calls).toBe(2); // 12 lessons / batch size 6 => 2 calls
+
+		const enrichmentQuota = readQuotaState(
+			dir,
+			'knowledge-enrichment-quota.json',
+		);
+		expect(enrichmentQuota?.calls_used).toBe(2);
+		expect(readQuotaState(dir, 'skill-improver-quota.json')).toBeNull();
 	});
 });
