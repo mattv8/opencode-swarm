@@ -453,16 +453,25 @@ architect to call `skill_apply`.
 
 ### Maturity gate
 
-The compiler no longer requires only repeated high-confidence confirmations.
-Selection uses the effective event-sourced outcome rollup:
+An entry qualifies for skill compilation when **any** of these criteria are met:
 
-- Repeated confirmations still qualify candidates.
-- Strong positive outcomes (`applied_explicit`, `succeeded_after_shown`, or
-  repeated acknowledgments) can qualify a well-evidenced singleton even when
-  confirmation count is low.
-- Negative outcome signal blocks compilation even when confidence is high.
-- The default confidence floor is `0.70`; high/critical priority and strong
-  outcome records can draft a singleton proposal, but activation remains manual.
+**1. Positive outcome track record** — Entry has been applied successfully (e.g., `applied_explicit_count >= 3` or `succeeded_after_shown_count >= 3`) with positive `computeOutcomeSignal > 0`. Singletons with strong positive outcomes can compile even with low confirmation count.
+
+**2. Multiple distinct phase confirmations** — Entry is confirmed in 2+ distinct phases. The default `min_skill_confirmations=2` uses distinct phase numbers, not total confirmation records, so an entry confirmed once in phase 1 and once in phase 2 qualifies.
+
+**3. High confidence** — Entry confidence >= `min_skill_confidence` (default 0.7). Entries without outcome history can enter the pipeline if confidence is adequate.
+
+**Blocking rule:** Entries with negative outcome signal (`computeOutcomeSignal < 0`) are rejected regardless of confirmations or confidence.
+
+**Configuration keys** (under `curator` config):
+- `min_skill_confidence`: Confidence floor for candidates (default `0.70`). Configurable via config schema.
+- `min_skill_confirmations`: Minimum distinct phases or strong outcomes threshold (default `2`). Configurable via config schema.
+
+**Singleton promotion:** 1-entry clusters compile if the entry is:
+- A high/critical priority directive, OR
+- Has strong outcome record (applied/succeeded >= 3)
+
+This allows well-evidenced singletons to become skills even when they haven't accumulated multiple confirmations yet.
 
 See [Generated Skills](skills.md) for the generated-skill lifecycle and file
 layout.
