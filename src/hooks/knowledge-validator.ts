@@ -167,8 +167,42 @@ function normalizeText(text: string): string {
 }
 
 /**
+ * Extract context words around a target word (bigrams/surrounding words).
+ * Context window is 3 words before and after, excluding the negation word itself.
+ */
+function extractContextWords(
+	text: string,
+	word: string,
+	contextWindow = 3,
+): Set<string> {
+	const words = text.split(' ');
+	const idx = words.indexOf(word);
+	if (idx === -1) return new Set();
+
+	const start = Math.max(0, idx - contextWindow);
+	const end = Math.min(words.length, idx + contextWindow + 1);
+
+	const context = new Set<string>();
+	for (let i = start; i < end; i++) {
+		if (i !== idx && words[i] && words[i].length > 0) {
+			context.add(words[i]);
+		}
+	}
+	return context;
+}
+
+/**
+ * Check if two sets of words have significant overlap (at least one word in common).
+ */
+function hasSignificantOverlap(set1: Set<string>, set2: Set<string>): boolean {
+	if (set1.size === 0 || set2.size === 0) return false;
+	return [...set1].some((word) => set2.has(word));
+}
+
+/**
  * Detect contradiction between candidate and existing lessons.
  * Only compares pairs that share at least 1 tag in common.
+ * Requires negation words to attach to overlapping content to flag as contradiction.
  * Returns true if a contradiction is found.
  */
 function detectContradiction(
@@ -191,11 +225,23 @@ function detectContradiction(
 
 		// Check for negation pairs
 		for (const [wordA, wordB] of NEGATION_PAIRS) {
-			const hasA =
-				candidateNorm.includes(wordA) && existingNorm.includes(wordB);
-			const hasB =
-				candidateNorm.includes(wordB) && existingNorm.includes(wordA);
-			if (hasA || hasB) return true;
+			// Case 1: candidate has wordA, existing has wordB
+			if (candidateNorm.includes(wordA) && existingNorm.includes(wordB)) {
+				const contextA = extractContextWords(candidateNorm, wordA);
+				const contextB = extractContextWords(existingNorm, wordB);
+				if (hasSignificantOverlap(contextA, contextB)) {
+					return true;
+				}
+			}
+
+			// Case 2: candidate has wordB, existing has wordA
+			if (candidateNorm.includes(wordB) && existingNorm.includes(wordA)) {
+				const contextB = extractContextWords(candidateNorm, wordB);
+				const contextA = extractContextWords(existingNorm, wordA);
+				if (hasSignificantOverlap(contextA, contextB)) {
+					return true;
+				}
+			}
 		}
 	}
 

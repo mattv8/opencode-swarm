@@ -542,7 +542,7 @@ describe('knowledge-validator', () => {
 			});
 		});
 
-		it('keeps agreeing negation pairs storable with warning at most', () => {
+		it('keeps agreeing negation pairs storable (no contradiction warning)', () => {
 			const candidate = 'Always run tests before commit';
 			const existingLessons = ['Never commit without running tests'];
 			const result = validateLesson(candidate, existingLessons, {
@@ -551,7 +551,26 @@ describe('knowledge-validator', () => {
 				confidence: 0.9,
 			});
 			expect(result.valid).toBe(true);
-			expect(result.severity).not.toBe('error');
+			// Should NOT be flagged as contradiction since contexts don't overlap
+			if (result.reason) {
+				expect(result.reason).not.toContain('contradiction');
+			}
+			// Should not have layer 3 (contradiction layer)
+			expect(result.layer).not.toBe(3);
+		});
+
+		it('still flags true contradictions with overlapping context', () => {
+			const candidate = 'Always use typescript for safety';
+			const existingLessons = ['Never use typescript for safety'];
+			const result = validateLesson(candidate, existingLessons, {
+				category: 'architecture',
+				scope: 'global',
+				confidence: 0.9,
+			});
+			expect(result.valid).toBe(true);
+			expect(result.layer).toBe(3);
+			expect(result.reason).toContain('contradiction');
+			expect(result.reason).toContain('shared tags');
 		});
 
 		it('passes contradiction without shared tags', () => {
