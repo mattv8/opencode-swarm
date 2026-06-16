@@ -1003,7 +1003,7 @@ export async function curateAndStoreSwarm(
 		// Plain-prose lessons are enriched via the curator LLM (one retry); entries
 		// that still fail are quarantined to the unactionable queue (recoverable by
 		// the skill-improver hardening loop), never activated.
-		let actionability = validateActionability(entry);
+		const actionability = validateActionability(entry);
 		if (!actionability.actionable && options?.llmDelegate) {
 			pendingBatchEnrichment.push({ entry, lesson, category, tags });
 			continue;

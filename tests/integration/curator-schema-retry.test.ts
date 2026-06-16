@@ -58,9 +58,19 @@ const VALID_V3 = JSON.stringify({
 	required_actions: ['run git status before committing'],
 	directive_priority: 'medium',
 });
+const VALID_V3_BATCH = JSON.stringify([
+	{
+		applies_to_agents: ['coder'],
+		required_actions: ['run git status before committing'],
+		directive_priority: 'medium',
+	},
+]);
 
 // Scope present but NO predicate field → fails actionability → triggers retry.
 const MISSING_PREDICATE = JSON.stringify({ applies_to_agents: ['coder'] });
+const MISSING_PREDICATE_BATCH = JSON.stringify([
+	{ applies_to_agents: ['coder'] },
+]);
 
 function readActiveEntries(dir: string): Array<Record<string, unknown>> {
 	const p = path.join(dir, '.swarm', 'knowledge.jsonl');
@@ -121,7 +131,7 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 		): Promise<string> => {
 			calls.push(userInput);
 			// First call: missing predicate fields. Second call: valid.
-			return calls.length === 1 ? MISSING_PREDICATE : VALID_V3;
+			return calls.length === 1 ? MISSING_PREDICATE_BATCH : VALID_V3_BATCH;
 		};
 
 		const result = await curateAndStoreSwarm(
@@ -138,8 +148,9 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 		// Exactly two LLM calls; the second carries the RETRY follow-up naming
 		// the missing requirement.
 		expect(calls).toHaveLength(2);
-		expect(calls[1]).toContain('RETRY: your last output was missing');
-		expect(calls[1]).toContain('predicate');
+		expect(calls[1]).toContain(
+			'RETRY: your last output still missed valid directives for items 1',
+		);
 
 		// The stored entry carries the v3 fields and is active (candidate status).
 		const entries = readActiveEntries(dir);
@@ -243,7 +254,7 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 		let called = 0;
 		const mockDelegate = async (): Promise<string> => {
 			called++;
-			return VALID_V3;
+			return VALID_V3_BATCH;
 		};
 		const result = await curateAndStoreSwarm(
 			[LESSON],
@@ -268,8 +279,9 @@ describe('curator v3 enrichment + retry (Task 4.2)', () => {
 			userInput: string,
 		): Promise<string> => {
 			calls++;
-			const expectedLenMatch =
-				/The array length MUST be exactly (\d+)\./.exec(userInput);
+			const expectedLenMatch = /The array length MUST be exactly (\d+)\./.exec(
+				userInput,
+			);
 			const expectedLen = expectedLenMatch
 				? Number.parseInt(expectedLenMatch[1], 10)
 				: 0;
