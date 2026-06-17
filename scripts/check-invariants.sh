@@ -15,7 +15,8 @@ echo "=== Check 1: Subprocess timeout required (advisory) ==="
 timeout_warnings=0
 while IFS= read -r file; do
   # Exempt the Bun compatibility layer — allowed to use Bun.spawn without timeout
-  if [[ "$file" == *"bun-compat.ts" ]]; then
+  basename_file="$(basename "$file")"
+  if [[ "$basename_file" == "bun-compat.ts" ]]; then
     continue
   fi
   has_timeout=$(grep -cE "timeout:|timeoutMs" "$file" || true)
@@ -49,7 +50,7 @@ LEGACY_EXEMPTS=(
 while IFS= read -r file; do
   exempt=false
   for legacy in "${LEGACY_EXEMPTS[@]}"; do
-    if [[ "$file" == *"$legacy" ]]; then
+    if [[ "$file" == "$legacy" ]]; then
       exempt=true
       break
     fi
@@ -70,7 +71,7 @@ echo "=== Check 3: mock.module allowlist ==="
 ALLOWLIST_FILE="$(dirname "$0")/mock-allowlist.txt"
 if [ ! -f "$ALLOWLIST_FILE" ]; then
   echo "ERROR: $ALLOWLIST_FILE not found — mock.module allowlist is required for Check 3"
-  echo "       To add a new mock target: append the normalized target to $ALLOWLIST_FILE with a comment"
+  echo "       Run: scripts/generate-mock-allowlist.sh to regenerate, or manually add targets to $ALLOWLIST_FILE"
   violations=$((violations + 1))
 else
   while IFS= read -r file; do
@@ -92,11 +93,21 @@ else
       # Skip empty lines
       [ -n "$target" ] || continue
 
-      # Normalize: strip all ../ segments, then leading src/, then .js extension
+      # Normalize: strip all ../ and ./ segments, then leading src/, then .js extension
       # ../../../src/plan/manager.js -> src/plan/manager
       # ../../src/tools/co-change-analyzer.js -> src/tools/co-change-analyzer
+      # ../../../src/tools/../tools/bar.js -> src/tools/bar (handles middle ..)
+      # ./ledger -> ledger (handles relative imports in same dir)
       # node:child_process -> node:child_process (unchanged)
-      normalized="$(echo "$target" | sed 's|^\(\.\.\/\)\+||; s|^src/||; s|\.js$||')"
+      normalized="$target"
+      # First, strip leading ../ and ./ sequences (using * for basic sed compatibility)
+      normalized="$(echo "$normalized" | sed 's|^\(\.\./\)*||; s|^\(./\)*||')"
+      # Then, repeatedly remove dir/.. patterns until no more exist (handles middle .. segments)
+      while [[ "$normalized" == *"/../"* ]]; do
+        normalized="$(echo "$normalized" | sed 's|[^/]\+/\.\.||')"
+      done
+      # Strip leading src/ and trailing .js
+      normalized="$(echo "$normalized" | sed 's|^src/||; s|\.js$||')"
       # Prepend src/ only for relative targets (not node: builtins)
       if [[ "$normalized" != node:* ]]; then
         normalized="src/$normalized"
@@ -115,13 +126,13 @@ else
 
       if ! $allowed; then
         echo "ERROR: $file mocks '$target' (normalized: '$normalized') — not in allowlist."
-        echo "       Use _internals DI seam, or add '$normalized' to $ALLOWLIST_FILE"
+        echo "       Use _internals DI seam, or run: scripts/generate-mock-allowlist.sh"
         violations=$((violations + 1))
       fi
     done < <(echo "$active_lines" \
       | grep -oP 'mock\.module\(\s*["\x27][^"\x27]+["\x27]' \
       | sed "s/^mock\.module(\s*[\"']//;s/[\"']$//" || true)
-  done < <(grep -rl 'mock\.module(' tests/ --include="*.test.ts" \
+  done < <(grep -rl 'mock\.module(' tests/ src/ --include="*.test.ts" \
     --exclude-dir=node_modules --exclude-dir=dist || true)
 fi
 
