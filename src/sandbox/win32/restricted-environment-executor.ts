@@ -228,7 +228,8 @@ export class WindowsSandboxExecutor implements SandboxExecutor {
 	 *   - Sets scoped temp directory (%TEMP%, %TMP%)
 	 *   - Restricts PATH to safe system paths only
 	 *   - Removes dangerous environment variables that could be used to bypass restrictions
-	 *   - Executes the command via cmd /c inside a PowerShell script
+	 *   - Executes PowerShell-native cmdlets (Remove-Item, Copy-Item, etc.) via Invoke-Expression,
+	 *     and all other commands via cmd /c inside a PowerShell script
 	 *
 	 * @param command   - Raw shell command to execute inside the sandbox
 	 * @param scopePaths - Additional scope paths to allow (merged with constructor scope)
