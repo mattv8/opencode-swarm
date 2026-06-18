@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.79.5](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.79.4...v7.79.5) (2026-06-18)
+
+
+### Bug Fixes
+
+* **prm:** harden trajectory, curator, and learning flows ([8446abc](https://github.com/ZaxbyHub/opencode-swarm/commit/8446abc0e21eee9047c0ddffae795ad958ef5663))
+
 ## [7.79.4](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.79.3...v7.79.4) (2026-06-18)
 
 
