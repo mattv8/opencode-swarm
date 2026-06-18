@@ -11,6 +11,8 @@
  *   - 1: spawn failure or other error
  */
 
+import { fileURLToPath } from "node:url";
+
 function parseArgs(argv: string[]): {
 	filePath: string;
 	passthroughArgs: string[];
@@ -60,7 +62,8 @@ async function main(): Promise<void> {
 	);
 
 	const hasTimeout = passthroughArgs.some(a => a === "--timeout" || a.startsWith("--timeout="));
-	const childArgs = ["--smol", "test", filePath, ...(hasTimeout ? [] : ["--timeout", "120000"]), ...passthroughArgs];
+	const keepalivePreload = fileURLToPath(new URL("./bun-32056-keepalive.ts", import.meta.url));
+	const childArgs = ["--smol", "--preload", keepalivePreload, "test", filePath, ...(hasTimeout ? [] : ["--timeout", "120000"]), ...passthroughArgs];
 	const startTime = new Date();
 	let timedOut = false;
 
