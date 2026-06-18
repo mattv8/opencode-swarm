@@ -290,7 +290,7 @@ The coder and reviewer agents automatically receive language-specific constraint
 
 ## Curator Integration
 
-The Curator is an optional background analysis system that provides phase-level intelligence across the project lifecycle. It is **disabled by default** — set `curator.enabled = true` in `.opencode/opencode-swarm.json` to activate it.
+The Curator is a background analysis system that provides phase-level intelligence across the project lifecycle. It is **enabled by default**; set `curator.enabled = false` in `.opencode/opencode-swarm.json` to disable it.
 
 ### How the Curator Hooks into Execution
 
@@ -367,7 +367,7 @@ interface DriftReport {
 
 | Field | Default | Effect |
 |-------|---------|--------|
-| `enabled` | `false` | Master switch — must be `true` for any Curator activity |
+| `enabled` | `true` | Master switch; set to `false` to disable Curator activity |
 | `init_enabled` | `true` | Run curator init on first phase |
 | `phase_enabled` | `true` | Run phase analysis + drift check after each phase |
 | `max_summary_tokens` | `2000` | Cap on curator summary size |
