@@ -2,7 +2,7 @@
  * Hanging test fixture for run-test-with-timeout tests.
  * Runs indefinitely to test the timeout kill mechanism.
  */
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 describe('hanging fixture', () => {
 	test('hangs forever', async () => {
