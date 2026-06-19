@@ -10,7 +10,7 @@ guesses under interleaved delegations.
 - Deleting `.swarm/skill-usage.jsonl` is no longer a recovery step — reprocessing the same batch is safe
 
 ### Gap 2 — explicit compliance attribution
-- Reviewer prompt now mandates a `TASK: <task-id>` line immediately before `SKILL_COMPLIANCE` so attribution is explicit, not heuristic
+- Reviewer prompt now instructs the LLM to output a `TASK: <task-id>` line immediately before `SKILL_COMPLIANCE` so attribution is explicit, not heuristic
 - Eliminates reliance on "latest delegation" fallback under interleaved or parallel delegations
 
 ### Tests

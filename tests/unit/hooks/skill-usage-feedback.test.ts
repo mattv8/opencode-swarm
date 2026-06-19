@@ -958,6 +958,122 @@ Content
 		// Knowledge confidence must not be bumped again
 		expect(readSwarmKnowledge(tempDir)[0]!.confidence).toBeCloseTo(0.55);
 	});
+
+	test('markers survive multiple prune cycles and remain idempotent', async () => {
+		writeSwarmKnowledge(tempDir, [
+			{
+				id: 'multi-cycle-uuid',
+				lesson: 'multi-cycle prune idempotency test entry',
+				confidence: 0.5,
+			},
+		]);
+		writeSkillFile(tempDir, '.claude/skills/multi-cycle-skill/SKILL.md', [
+			'multi-cycle-uuid',
+		]);
+
+		// Seed one actionable entry and several older non-actionable entries so
+		// pruning actually removes lines on each cycle.
+		for (let i = 0; i < 5; i++) {
+			appendSkillUsageEntry(tempDir, {
+				skillPath: '.claude/skills/multi-cycle-skill/SKILL.md',
+				agentName: 'test-agent',
+				taskID: `task-old-${i}`,
+				timestamp: `2026-01-01T00:0${i.toString()}:00.000Z`,
+				complianceVerdict: 'not_checked',
+				sessionID: 'session-abc',
+			});
+		}
+		appendSkillUsageEntry(tempDir, {
+			skillPath: '.claude/skills/multi-cycle-skill/SKILL.md',
+			agentName: 'test-agent',
+			taskID: 'task-actionable',
+			timestamp: '2026-01-02T00:00:00.000Z',
+			complianceVerdict: 'compliant',
+			sessionID: 'session-abc',
+		});
+
+		const first = await applySkillUsageFeedback(tempDir);
+		expect(first).toEqual({ processed: 1, bumps: 1 });
+		expect(readSwarmKnowledge(tempDir)[0]!.confidence).toBeCloseTo(0.55);
+
+		// First prune + feedback cycle.
+		expect(pruneSkillUsageLog(tempDir, 3).pruned).toBeGreaterThan(0);
+		expect(await applySkillUsageFeedback(tempDir)).toEqual({
+			processed: 0,
+			bumps: 0,
+		});
+
+		// Second prune + feedback cycle — markers must still survive.
+		expect(pruneSkillUsageLog(tempDir, 2).pruned).toBeGreaterThan(0);
+		expect(await applySkillUsageFeedback(tempDir)).toEqual({
+			processed: 0,
+			bumps: 0,
+		});
+
+		expect(readSwarmKnowledge(tempDir)[0]!.confidence).toBeCloseTo(0.55);
+	});
+
+	test('incremental processing only applies feedback for new entries', async () => {
+		writeSwarmKnowledge(tempDir, [
+			{ id: 'incr-a-uuid', lesson: 'incremental skill A', confidence: 0.5 },
+			{ id: 'incr-b-uuid', lesson: 'incremental skill B', confidence: 0.5 },
+		]);
+		writeSkillFile(tempDir, '.claude/skills/incr-skill-a/SKILL.md', [
+			'incr-a-uuid',
+		]);
+		writeSkillFile(tempDir, '.claude/skills/incr-skill-b/SKILL.md', [
+			'incr-b-uuid',
+		]);
+
+		appendSkillUsageEntry(tempDir, {
+			skillPath: '.claude/skills/incr-skill-a/SKILL.md',
+			agentName: 'test-agent',
+			taskID: 'task-a-1',
+			timestamp: '2026-01-01T00:00:00.000Z',
+			complianceVerdict: 'compliant',
+			sessionID: 'session-abc',
+		});
+		appendSkillUsageEntry(tempDir, {
+			skillPath: '.claude/skills/incr-skill-b/SKILL.md',
+			agentName: 'test-agent',
+			taskID: 'task-b-1',
+			timestamp: '2026-01-01T00:01:00.000Z',
+			complianceVerdict: 'compliant',
+			sessionID: 'session-abc',
+		});
+
+		const first = await applySkillUsageFeedback(tempDir);
+		expect(first).toEqual({ processed: 2, bumps: 2 });
+
+		const afterFirst = readSwarmKnowledge(tempDir);
+		expect(
+			afterFirst.find((e) => e.id === 'incr-a-uuid')!.confidence,
+		).toBeCloseTo(0.55);
+		expect(
+			afterFirst.find((e) => e.id === 'incr-b-uuid')!.confidence,
+		).toBeCloseTo(0.55);
+
+		// Add one more entry for skill A only.
+		appendSkillUsageEntry(tempDir, {
+			skillPath: '.claude/skills/incr-skill-a/SKILL.md',
+			agentName: 'test-agent',
+			taskID: 'task-a-2',
+			timestamp: '2026-01-01T00:02:00.000Z',
+			complianceVerdict: 'compliant',
+			sessionID: 'session-abc',
+		});
+
+		const second = await applySkillUsageFeedback(tempDir);
+		expect(second).toEqual({ processed: 1, bumps: 1 });
+
+		const afterSecond = readSwarmKnowledge(tempDir);
+		expect(
+			afterSecond.find((e) => e.id === 'incr-a-uuid')!.confidence,
+		).toBeCloseTo(0.6);
+		expect(
+			afterSecond.find((e) => e.id === 'incr-b-uuid')!.confidence,
+		).toBeCloseTo(0.55);
+	});
 });
 
 // =============================================================================

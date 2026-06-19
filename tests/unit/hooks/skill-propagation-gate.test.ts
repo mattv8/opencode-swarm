@@ -3643,6 +3643,7 @@ SKILL_COMPLIANCE: COMPLIANT — skill A rules followed`,
 			expect(complianceEntries).toHaveLength(1);
 			const entry = complianceEntries[0];
 			expect(entry.taskID).toBe('task-b');
+			expect(entry.skillPath).toBe(skillB);
 			expect(entry.complianceVerdict).toBe('compliant');
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });

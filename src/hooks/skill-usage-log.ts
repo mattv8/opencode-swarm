@@ -519,10 +519,9 @@ export function pruneSkillUsageLog(
 	const raw = _internals.readFileSync(resolved, 'utf-8');
 	const lines = raw.split('\n');
 
-	// Partition lines into parsed entries, preserved marker raw lines, and skipped lines.
+	// Partition lines into parsed entries and preserved marker raw lines.
 	const entries: SkillUsageEntry[] = [];
 	const preservedMarkers: string[] = [];
-	let malformed = 0;
 
 	for (const line of lines) {
 		const trimmed = line.trim();
@@ -538,18 +537,17 @@ export function pruneSkillUsageLog(
 			const entry = parseSkillUsageEntry(parsed);
 			if (entry) {
 				entries.push(entry);
-			} else {
-				malformed++;
 			}
 		} catch {
-			malformed++;
+			// skip malformed line — preserved by leaving the file untouched below
 		}
 	}
 
 	if (entries.length === 0) {
 		// Nothing to prune — write back preserved markers (if any) to refresh the file,
-		// then return.
-		if (preservedMarkers.length > 0 || malformed > 0) {
+		// then return. Malformed lines are left untouched so we do not accidentally
+		// destroy data that a future parser revision might be able to recover.
+		if (preservedMarkers.length > 0) {
 			const dir = path.dirname(resolved);
 			const tmpPath = path.join(dir, `skill-usage-${Date.now()}.tmp`);
 			const content = preservedMarkers
