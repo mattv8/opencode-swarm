@@ -6,12 +6,15 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import lockfile from 'proper-lockfile';
 import { atomicWriteFile } from '../evidence/task-file.js';
+import { readCachedParsedFile } from '../utils/swarm-artifact-cache.js';
 import type {
 	ActionableDirectiveFields,
 	KnowledgeEntryBase,
 	RejectedLesson,
 	RetrievalOutcome,
 } from './knowledge-types.js';
+
+const KNOWLEDGE_JSONL_CACHE_NAMESPACE = 'knowledge-jsonl:normalized:v1';
 
 // ============================================================================
 // Path Resolvers
@@ -89,6 +92,16 @@ export function resolveHiveRejectedPath(): string {
 	return path.join(path.dirname(hivePath), 'shared-learnings-rejected.jsonl');
 }
 
+// Returns path to the hive-level knowledge events log (same directory as hive
+// knowledge). This is the shared, cross-project audit trail for mutations to the
+// hive store: it lives alongside the hive store so the store and its audit
+// history share one scope, and any project can read why a hive entry was
+// archived/quarantined/purged.
+export function resolveHiveEventsPath(): string {
+	const hivePath = resolveHiveKnowledgePath();
+	return path.join(path.dirname(hivePath), 'shared-knowledge-events.jsonl');
+}
+
 // ============================================================================
 // Read Functions
 // ============================================================================
@@ -98,25 +111,35 @@ export function resolveHiveRejectedPath(): string {
 // v2: each parsed entry is passed through normalizeEntry() so v1 entries get
 // optional v2 fields filled in WITHOUT mutating on-disk JSONL.
 export async function readKnowledge<T>(filePath: string): Promise<T[]> {
-	if (!existsSync(filePath)) return [];
-	const content = await readFile(filePath, 'utf-8');
-	const results: T[] = [];
-	for (const line of content.split('\n')) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-		try {
-			const raw = JSON.parse(trimmed) as T;
-			results.push(normalizeEntry(raw));
-		} catch {
-			console.warn(
-				`[knowledge-store] Skipping corrupted JSONL line in ${filePath}: ${trimmed.slice(
-					0,
-					80,
-				)}`,
-			);
-		}
-	}
-	return results;
+	const resolvedPath = path.resolve(filePath);
+	const entries = await readCachedParsedFile<T[]>(
+		resolvedPath,
+		KNOWLEDGE_JSONL_CACHE_NAMESPACE,
+		async () => {
+			if (!existsSync(resolvedPath)) return null;
+			return await readFile(resolvedPath, 'utf-8');
+		},
+		(content) => {
+			const results: T[] = [];
+			for (const line of content.split('\n')) {
+				const trimmed = line.trim();
+				if (!trimmed) continue;
+				try {
+					const raw = JSON.parse(trimmed) as T;
+					results.push(normalizeEntry(raw));
+				} catch {
+					console.warn(
+						`[knowledge-store] Skipping corrupted JSONL line in ${resolvedPath}: ${trimmed.slice(
+							0,
+							80,
+						)}`,
+					);
+				}
+			}
+			return results;
+		},
+	);
+	return entries ?? [];
 }
 
 // v2: Normalize a parsed entry to the current shape in memory.
@@ -844,6 +867,7 @@ export const _internals: {
 	resolveSwarmRejectedPath: typeof resolveSwarmRejectedPath;
 	resolveHiveKnowledgePath: typeof resolveHiveKnowledgePath;
 	resolveHiveRejectedPath: typeof resolveHiveRejectedPath;
+	resolveHiveEventsPath: typeof resolveHiveEventsPath;
 	readKnowledge: typeof readKnowledge;
 	readRejectedLessons: typeof readRejectedLessons;
 	appendKnowledge: typeof appendKnowledge;
@@ -868,6 +892,7 @@ export const _internals: {
 	resolveSwarmRejectedPath,
 	resolveHiveKnowledgePath,
 	resolveHiveRejectedPath,
+	resolveHiveEventsPath,
 	readKnowledge,
 	readRejectedLessons,
 	appendKnowledge,

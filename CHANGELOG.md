@@ -1,5 +1,137 @@
 # Changelog
 
+## [7.79.5](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.79.4...v7.79.5) (2026-06-18)
+
+
+### Bug Fixes
+
+* **prm:** harden trajectory, curator, and learning flows ([8446abc](https://github.com/ZaxbyHub/opencode-swarm/commit/8446abc0e21eee9047c0ddffae795ad958ef5663))
+
+## [7.79.4](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.79.3...v7.79.4) (2026-06-18)
+
+
+### Bug Fixes
+
+* **npm:** update repository URL for provenance verification after repo move ([9a289de](https://github.com/ZaxbyHub/opencode-swarm/commit/9a289de1b512a29dc6bb0cffeb6afb1b8700001c))
+* **npm:** update repository URL for provenance verification after repo move ([e22794e](https://github.com/ZaxbyHub/opencode-swarm/commit/e22794eaf5f3b1b72f8b58839666f80174cbb6ff))
+
+## [7.79.3](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.79.2...v7.79.3) (2026-06-18)
+
+
+### Bug Fixes
+
+* **planning:** offer general council before plan writing ([c27cb76](https://github.com/ZaxbyHub/opencode-swarm/commit/c27cb763ffc0e3f4ae8453f90b3520ade86802bd))
+
+## [7.79.2](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.79.1...v7.79.2) (2026-06-18)
+
+
+### Bug Fixes
+
+* **ci:** add preload-based keepalive to wrapper for universal Bun [#32056](https://github.com/ZaxbyHub/opencode-swarm/issues/32056) fix ([e832e9a](https://github.com/ZaxbyHub/opencode-swarm/commit/e832e9ad6946093a638cf1019db2f51b59d2e8fd))
+* **ci:** per-file wall-clock timeout wrapper for Windows merge-queue shard hangs ([#1403](https://github.com/ZaxbyHub/opencode-swarm/issues/1403)) ([a7bc92d](https://github.com/ZaxbyHub/opencode-swarm/commit/a7bc92d1be8a35c2f69e40029f0a921f2afd649b))
+* **ci:** per-file wall-clock timeout wrapper for Windows merge-queue shard hangs ([#1403](https://github.com/ZaxbyHub/opencode-swarm/issues/1403)) ([9f11a90](https://github.com/ZaxbyHub/opencode-swarm/commit/9f11a9027a941974c8e1af897dd6d907f0c475c8))
+* **ci:** rename test fixtures to avoid CI auto-discovery ([#1403](https://github.com/ZaxbyHub/opencode-swarm/issues/1403)) ([f2ace34](https://github.com/ZaxbyHub/opencode-swarm/commit/f2ace3432fe0324ac6a3cbb8f7bf08b13ed65380))
+* **tests:** add Bun [#32056](https://github.com/ZaxbyHub/opencode-swarm/issues/32056) keepalive workaround to Windows-hanging test files ([0e05d34](https://github.com/ZaxbyHub/opencode-swarm/commit/0e05d34f08a1e8e00b3baffe14f5fedadfd1fc50))
+
+## [7.79.1](https://github.com/zaxbysauce/opencode-swarm/compare/v7.79.0...v7.79.1) (2026-06-17)
+
+
+### Performance Improvements
+
+* **ci:** two-tier CI with automatic test sharding for faster PR feedback ([#1395](https://github.com/zaxbysauce/opencode-swarm/issues/1395)) ([5f4cd84](https://github.com/zaxbysauce/opencode-swarm/commit/5f4cd84690096b29b6bd10b3106e0be0b8033b3b))
+
+## [7.79.0](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.8...v7.79.0) (2026-06-17)
+
+
+### Features
+
+* **tools:** reduce architect tool surface and lower summarizer threshold ([#1393](https://github.com/zaxbysauce/opencode-swarm/issues/1393)) ([d098499](https://github.com/zaxbysauce/opencode-swarm/commit/d098499a80537b8f921679aa06ea864061c07583))
+
+## [7.78.8](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.7...v7.78.8) (2026-06-17)
+
+
+### Bug Fixes
+
+* **git:** correct finalize git detection and subprocess safety ([#1396](https://github.com/zaxbysauce/opencode-swarm/issues/1396)) ([b3fb3ce](https://github.com/zaxbysauce/opencode-swarm/commit/b3fb3ce6c3e697a40cd630065f63a14b8bb2d56f))
+
+## [7.78.7](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.6...v7.78.7) (2026-06-17)
+
+
+### Bug Fixes
+
+* resolve 106 pre-existing test failures across three categories ([#1245](https://github.com/zaxbysauce/opencode-swarm/issues/1245)) ([5a6cee1](https://github.com/zaxbysauce/opencode-swarm/commit/5a6cee17075f414385d74acd92a3909487f95dab))
+
+## [7.78.6](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.5...v7.78.6) (2026-06-17)
+
+
+### Bug Fixes
+
+* **close:** distinguish git lookup failures ([#1254](https://github.com/zaxbysauce/opencode-swarm/issues/1254)) ([37eb88f](https://github.com/zaxbysauce/opencode-swarm/commit/37eb88fa3ab433154f964ae1c51873e05dad87da))
+
+## [7.78.5](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.4...v7.78.5) (2026-06-16)
+
+
+### Bug Fixes
+
+* **skill-compliance:** unify verdict vocabulary from 'violation' to 'violated' ([#1325](https://github.com/zaxbysauce/opencode-swarm/issues/1325)) ([8870463](https://github.com/zaxbysauce/opencode-swarm/commit/8870463e7155e2e7dd0b4d01b5d309a43308e8bb))
+* **turbo/lean:** address post-merge architectural concerns ([#1246](https://github.com/zaxbysauce/opencode-swarm/issues/1246)) ([021461c](https://github.com/zaxbysauce/opencode-swarm/commit/021461c5d35e5165fc2d0ce8b4dd84e5b8e22e8b))
+
+## [7.78.4](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.3...v7.78.4) (2026-06-16)
+
+
+### Performance Improvements
+
+* **cache:** add swarm artifact read-through cache ([#1320](https://github.com/zaxbysauce/opencode-swarm/issues/1320)) ([6e2b476](https://github.com/zaxbysauce/opencode-swarm/commit/6e2b476cb4bc072f2063705b286132de4e50ec78))
+
+## [7.78.3](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.2...v7.78.3) (2026-06-16)
+
+
+### Bug Fixes
+
+* **knowledge:** prevent counter decay on trim and cap unbounded application log ([#1335](https://github.com/zaxbysauce/opencode-swarm/issues/1335)) ([842395e](https://github.com/zaxbysauce/opencode-swarm/commit/842395e1fc034431a408d7b42858982a91afb8d4))
+
+## [7.78.2](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.1...v7.78.2) (2026-06-16)
+
+
+### Bug Fixes
+
+* **pr-monitor:** start worker unconditionally and add startup scan ([#1381](https://github.com/zaxbysauce/opencode-swarm/issues/1381)) ([#1384](https://github.com/zaxbysauce/opencode-swarm/issues/1384)) ([0344425](https://github.com/zaxbysauce/opencode-swarm/commit/0344425006eb40adfc9814a2ad1af745e31d0483))
+
+## [7.78.1](https://github.com/zaxbysauce/opencode-swarm/compare/v7.78.0...v7.78.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **knowledge:** route bumpCountersBatch and knowledge_archive through transactKnowledge ([#1311](https://github.com/zaxbysauce/opencode-swarm/issues/1311)) ([5dd7285](https://github.com/zaxbysauce/opencode-swarm/commit/5dd72851d5e79b44986e1c6ecae9480b90c4dd33))
+
+## [7.78.0](https://github.com/zaxbysauce/opencode-swarm/compare/v7.77.7...v7.78.0) (2026-06-16)
+
+
+### Features
+
+* **knowledge-archive:** Add hive-tier support for archiving cross-project lessons ([#1306](https://github.com/zaxbysauce/opencode-swarm/issues/1306)) ([a880658](https://github.com/zaxbysauce/opencode-swarm/commit/a8806582804c86696c7fb9635deeb0b20648ed5f))
+
+## [7.77.7](https://github.com/zaxbysauce/opencode-swarm/compare/v7.77.6...v7.77.7) (2026-06-16)
+
+
+### Bug Fixes
+
+* **sessions:** abort in-flight prompt before session.delete() to prevent FK crashes ([#1374](https://github.com/zaxbysauce/opencode-swarm/issues/1374)) ([5e0c954](https://github.com/zaxbysauce/opencode-swarm/commit/5e0c95406c2b78c94853a9bac990fbee5efae883))
+
+## [7.77.6](https://github.com/zaxbysauce/opencode-swarm/compare/v7.77.5...v7.77.6) (2026-06-16)
+
+
+### Bug Fixes
+
+* **repo-graph:** retry rename on EPERM/EBUSY in saveGraph ([#1372](https://github.com/zaxbysauce/opencode-swarm/issues/1372)) ([a434dc2](https://github.com/zaxbysauce/opencode-swarm/commit/a434dc2ba312888a2a3e523c5dd6d895bb0d98a7))
+
+## [7.77.5](https://github.com/zaxbysauce/opencode-swarm/compare/v7.77.4...v7.77.5) (2026-06-16)
+
+
+### Bug Fixes
+
+* **commands:** wire gap commands into TUI and establish tool-policy SSOT ([#1380](https://github.com/zaxbysauce/opencode-swarm/issues/1380)) ([010f612](https://github.com/zaxbysauce/opencode-swarm/commit/010f612c7dad0d1bd714018c162b43e77d6fb5d8))
+
 ## [7.77.4](https://github.com/zaxbysauce/opencode-swarm/compare/v7.77.3...v7.77.4) (2026-06-16)
 
 

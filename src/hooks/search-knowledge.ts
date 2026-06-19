@@ -393,6 +393,7 @@ export async function searchKnowledge(
 
 		type Scored = RankedEntry & {
 			__critical: boolean;
+			__forceHive: boolean;
 		};
 		const scored: Scored[] = candidates.map((entry) => {
 			const retrievalOutcomes = effectiveRetrievalOutcomes(
@@ -490,6 +491,7 @@ export async function searchKnowledge(
 			const isCritical =
 				entry.directive_priority === 'critical' &&
 				(ds.triggerHit || ds.actionHit || ds.agentHit);
+			const isForceHive = forceReadHive && entry.tier === 'hive';
 
 			return {
 				...entry,
@@ -497,6 +499,7 @@ export async function searchKnowledge(
 				finalScore,
 				coldStartBoost: coldStartBonus,
 				__critical: isCritical,
+				__forceHive: isForceHive,
 			};
 		});
 
@@ -524,6 +527,16 @@ export async function searchKnowledge(
 				seen.add(e.id);
 			}
 		}
+		// forceReadHive entries are also pinned ahead of the MMR fill so that an
+		// explicit manual-recall query surfaces hive entries even when the global
+		// hive file is large and the default result cap would otherwise drop them.
+		for (const e of scored) {
+			if (top.length >= max) break;
+			if (e.__forceHive && !seen.has(e.id)) {
+				top.push(e);
+				seen.add(e.id);
+			}
+		}
 		// MMR fill for the non-critical remainder.
 		const lambda = clampLambda(config.retrieval?.mmr_lambda);
 		const remaining = scored.filter((e) => !seen.has(e.id));
@@ -536,7 +549,9 @@ export async function searchKnowledge(
 			}
 		}
 
-		results = top.map(({ __critical: _c, ...rest }) => rest as RankedEntry);
+		results = top.map(
+			({ __critical: _c, __forceHive: _f, ...rest }) => rest as RankedEntry,
+		);
 	} catch (err) {
 		warn(
 			`[search-knowledge] retrieval failed: ${

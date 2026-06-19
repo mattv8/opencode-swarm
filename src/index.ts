@@ -13,11 +13,15 @@ import {
 	PrMonitorWorker,
 } from './background';
 import { createBackgroundCompletionObserver } from './background/completion-observer.js';
-import { setOnSubscriptionCreated } from './background/pr-subscriptions';
+import {
+	listActive as listActiveSubscriptions,
+	setOnSubscriptionCreated,
+} from './background/pr-subscriptions';
 import {
 	agentHasSwarmCommandTool,
 	createSwarmCommandHandler,
 } from './commands';
+import { COMMAND_REGISTRY, VALID_COMMANDS } from './commands/registry.js';
 import { loadPluginConfigWithMetaAsync } from './config';
 import { syncBundledProjectSkillsIfMissingAsync } from './config/bundled-skills.js';
 import { DEFAULT_MODELS, ORCHESTRATOR_NAME } from './config/constants';
@@ -43,7 +47,6 @@ import {
 } from './config/schema';
 import { updateContextMapAfterAgent } from './context-map/post-agent-update.js';
 import { tickAndMaybeDispatchCadence } from './full-auto/cadence.js';
-import { isGhAvailable } from './git';
 import {
 	composeHandlers,
 	consolidateSystemMessages,
@@ -115,7 +118,7 @@ import { createSnapshotWriterHook } from './session/snapshot-writer.js';
 import { ensureAgentSession, swarmState } from './state';
 import { initTelemetry, telemetry } from './telemetry';
 import { buildPluginToolObject } from './tools/plugin-registration';
-import { log, warn } from './utils';
+import { error, log, warn } from './utils';
 import {
 	ENSURE_SWARM_GIT_EXCLUDED_OUTER_TIMEOUT_MS,
 	ensureSwarmGitExcluded,
@@ -903,41 +906,34 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 		});
 	}
 
-	// PR Monitor Worker — lazy start
-	// Worker is NOT started at plugin init — it starts lazily when the
-	// first subscription is created via the onSubscriptionCreated callback.
-	// This runs regardless of automation mode — gated only by pr_monitor.enabled.
+	// PR Monitor Worker — starts when pr_monitor.enabled and subscriptions exist.
+	// Worker creation is idempotent: first call creates, subsequent calls no-op.
 	const prMonitorConfig = PrMonitorConfigSchema.parse(config.pr_monitor ?? {});
 
-	// Wire the lazy-start callback into the subscription store so the
-	// worker starts automatically when the first PR is subscribed.
-	setOnSubscriptionCreated((directory: string, _record) => {
+	function ensurePrMonitorWorkerRunning(directory: string): void {
 		try {
-			// Only start if pr_monitor is enabled and gh CLI is available
 			if (!prMonitorConfig.enabled) return;
-			if (!isGhAvailable(directory)) {
-				log('[pr-monitor] gh CLI not available — skipping worker start');
-				return;
-			}
-			// Create worker on first trigger, reuse on subsequent
 			if (!prMonitorWorker) {
 				prMonitorWorker = new PrMonitorWorker({
 					directory,
 					config: prMonitorConfig,
-					// sessionId removed: worker polls ALL active subscriptions,
-					// not just the one from the triggering session. Session-scoped
-					// delivery is handled at the event layer (task 2.4).
 				});
 			}
 			if (!prMonitorWorker.isRunning()) {
 				prMonitorWorker.start();
-				log('PR Monitor Worker lazy-started', { directory });
+				log('PR Monitor Worker started', { directory });
 			}
 		} catch (err) {
-			log('PR Monitor Worker failed to lazy-start (non-fatal)', {
+			error('[pr-monitor] Worker failed to start (non-fatal)', {
 				error: err instanceof Error ? err.message : String(err),
 			});
 		}
+	}
+
+	// Wire the lazy-start callback into the subscription store so the
+	// worker starts automatically when a new PR is subscribed.
+	setOnSubscriptionCreated((directory: string, _record) => {
+		ensurePrMonitorWorkerRunning(directory);
 	});
 
 	// Register PR event subscribers for advisory delivery to active sessions
@@ -956,6 +952,24 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 				error: err instanceof Error ? err.message : String(err),
 			});
 		}
+	}
+
+	// Startup scan: resume worker for existing subscriptions after plugin restart.
+	// Deferred via queueMicrotask so setup() returns promptly (fail-open).
+	if (prMonitorConfig.enabled) {
+		queueMicrotask(() => {
+			void listActiveSubscriptions(ctx.directory)
+				.then((active) => {
+					if (active.length > 0) {
+						ensurePrMonitorWorkerRunning(ctx.directory);
+					}
+				})
+				.catch((err) => {
+					error('[pr-monitor] Startup scan failed (non-fatal)', {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				});
+		});
 	}
 
 	// Cleanup: stop automation manager and workers on process exit
@@ -1171,6 +1185,19 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 			}
 
 			// Register /swarm command
+			// Build a model-facing shortcut description from the registry entry (SSOT — can't drift).
+			const shortcutDescription = (cmd: string): string => {
+				const entry = COMMAND_REGISTRY[cmd as keyof typeof COMMAND_REGISTRY] as
+					| { description?: string }
+					| undefined;
+				if (!entry?.description) {
+					return `Use /swarm ${cmd}`; // fallback if registry entry is somehow missing
+				}
+				const desc =
+					entry.description.charAt(0).toLowerCase() +
+					entry.description.slice(1);
+				return `Use /swarm ${cmd} to ${desc}`;
+			};
 			opencodeConfig.command = {
 				...((opencodeConfig.command as Record<string, unknown>) || {}),
 				swarm: {
@@ -1178,8 +1205,21 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 					// Keep it minimal — instructional text confuses non-frontier models.
 					// The actual command is handled by command.execute.before hook.
 					template: '/swarm $ARGUMENTS',
-					description:
-						'Swarm management commands: /swarm [status|show-plan|plan|agents|history|config|help|evidence|handoff|archive|diagnose|diagnosis|preflight|sync-plan|benchmark|export|reset|rollback|retrieve|clarify|analyze|specify|sdd|brainstorm|council|pr-review|pr-feedback|deep-dive|deep-research|codebase-review|design-docs|issue|qa-gates|dark-matter|knowledge|memory|curate|consolidate|concurrency|turbo|full-auto|auto-proceed|write-retro|reset-session|simulate|promote|checkpoint|acknowledge-spec-drift|doctor tools|finalize|close]',
+					description: (() => {
+						// Derive the command list from the registry (single source of truth).
+						// Include standalone (non-alias, non-deprecated, non-subcommand) commands.
+						const standaloneCommands = VALID_COMMANDS.filter((cmd) => {
+							const entry = COMMAND_REGISTRY[
+								cmd as keyof typeof COMMAND_REGISTRY
+							] as {
+								aliasOf?: string;
+								deprecated?: boolean;
+								subcommandOf?: string;
+							};
+							return !entry.aliasOf && !entry.deprecated && !entry.subcommandOf;
+						});
+						return `Swarm management commands: /swarm [${standaloneCommands.join('|')}]`;
+					})(),
 				},
 				// Individual subcommands for discoverability by weaker models (Haiku-class)
 				'swarm-status': {
@@ -1284,6 +1324,11 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 					description:
 						'Use /swarm brainstorm to enter the architect MODE: BRAINSTORM planning workflow',
 				},
+				'swarm-loop': {
+					template: '/swarm loop $ARGUMENTS',
+					description:
+						'Use /swarm loop <objective> to run a compound-engineering loop: brainstorm → plan → build → review → improve, iterating until done [--max-cycles 1..5] [--autonomy checkpoint|auto] [--depth standard|exhaustive] [--resume]',
+				},
 				'swarm-council': {
 					template: '/swarm council $ARGUMENTS',
 					description:
@@ -1298,6 +1343,26 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 					template: '/swarm pr-feedback $ARGUMENTS',
 					description:
 						'Use /swarm pr-feedback to ingest and close known PR feedback (review comments, CI failures, conflicts) without a fresh broad review',
+				},
+				'swarm-pr-subscribe': {
+					template: '/swarm pr subscribe $ARGUMENTS',
+					description: shortcutDescription('pr subscribe'),
+				},
+				'swarm-pr-unsubscribe': {
+					template: '/swarm pr unsubscribe $ARGUMENTS',
+					description: shortcutDescription('pr unsubscribe'),
+				},
+				'swarm-pr-status': {
+					template: '/swarm pr status',
+					description: shortcutDescription('pr status'),
+				},
+				'swarm-learning': {
+					template: '/swarm learning',
+					description: shortcutDescription('learning'),
+				},
+				'swarm-post-mortem': {
+					template: '/swarm post-mortem $ARGUMENTS',
+					description: shortcutDescription('post-mortem'),
 				},
 				'swarm-deep-dive': {
 					template: '/swarm deep-dive $ARGUMENTS',
