@@ -21,6 +21,7 @@ import {
 	executeCollectLaneResults,
 	executeDispatchLanes,
 	executeDispatchLanesAsync,
+	MAX_PROMPT_CHARS,
 	type SessionOps,
 } from '../../../src/tools/dispatch-lanes';
 
@@ -1528,9 +1529,6 @@ describe('formatError — regression: PR #1358 review (R1.3)', () => {
 });
 
 describe('common_prompt (shared lane context)', () => {
-	// Mirrors MAX_PROMPT_CHARS in src/tools/dispatch-lanes.ts (per-lane prompt limit).
-	const MAX_PROMPT_CHARS = 80_000;
-
 	test('applyCommonPrompt prepends shared context to every lane prompt', () => {
 		const result = _test_exports.applyCommonPrompt(
 			[
@@ -1552,6 +1550,46 @@ describe('common_prompt (shared lane context)', () => {
 		if (!result.ok) return;
 		// passthrough: same reference, no allocation
 		expect(result.lanes).toBe(lanes);
+	});
+
+	test('applyCommonPrompt handles multi-line common_prompt and special characters correctly', () => {
+		// The separator is '\n\n', so a multi-line common_prompt produces a blank line
+		// between it and the lane prompt — standard Markdown paragraph separation.
+		const common = 'Line 1\nLine 2\n\nParagraph 2 — emoji: 🔍 unicode: café';
+		const result = _test_exports.applyCommonPrompt(
+			[{ id: 'x', agent: 'explorer', prompt: 'focus area' }],
+			common,
+		);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.lanes[0].prompt).toBe(
+			'Line 1\nLine 2\n\nParagraph 2 — emoji: 🔍 unicode: café\n\nfocus area',
+		);
+	});
+
+	test('empty string common_prompt is rejected by schema (min(1))', async () => {
+		const directory = makeTempDir();
+		const ops: SessionOps = {
+			create: mock(async () => ({ data: { id: 'session' }, error: undefined })),
+			prompt: mock(async () => ({
+				data: { parts: [{ type: 'text' as const, text: 'done' }] },
+				error: undefined,
+			})),
+			delete: mock(async () => undefined),
+		};
+		_internals.getSessionOps = () => ops;
+
+		const result = await executeDispatchLanes(
+			{
+				common_prompt: '' as string, // type cast to bypass TS — testing runtime schema guard
+				lanes: [{ id: 'x', agent: 'explorer', prompt: 'focus' }],
+			},
+			directory,
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.failure_class).toBe('invalid_args');
+		expect(ops.create).toHaveBeenCalledTimes(0);
 	});
 
 	test('applyCommonPrompt rejects when combined length exceeds the per-lane limit', () => {
