@@ -107,6 +107,9 @@ const DispatchLanesArgsSchema = z.object({
 	common_prompt: z
 		.string()
 		.min(1)
+		// Reserve room for the separator + at least 1 char of lane prompt so any
+		// schema-valid common_prompt can coexist with the shortest valid lane
+		// prompt without the combined length exceeding MAX_PROMPT_CHARS.
 		.max(MAX_PROMPT_CHARS - COMMON_PROMPT_SEPARATOR.length - 1)
 		.optional()
 		.describe(
@@ -1251,21 +1254,23 @@ type ApplyCommonPromptResult =
  * bloats the tool-call payload and triggers truncated/malformed tool-call JSON).
  * Returns an error when any assembled prompt exceeds the per-lane character limit.
  *
- * When `commonPrompt` is falsy, the original `lanes` array is returned by reference
- * (no allocation); callers must not mutate the returned array in place. When a
- * `commonPrompt` is applied, a fresh array of shallow-copied lanes is returned.
+ * Always returns a fresh array the caller owns: a shallow copy of the originals
+ * when no `commonPrompt` is provided, or shallow-copied lanes with rewritten
+ * prompts when it is. Callers may treat the returned array as their own.
  */
 function applyCommonPrompt(
 	lanes: DispatchLaneSpec[],
 	commonPrompt: string | undefined,
 ): ApplyCommonPromptResult {
-	if (!commonPrompt) return { ok: true, lanes };
+	if (!commonPrompt) return { ok: true, lanes: [...lanes] };
 	const errors: string[] = [];
 	const merged = lanes.map((lane) => {
 		const prompt = `${commonPrompt}${COMMON_PROMPT_SEPARATOR}${lane.prompt}`;
 		if (prompt.length > MAX_PROMPT_CHARS) {
 			errors.push(
-				`Lane "${lane.id}" combined common_prompt + prompt is ${prompt.length} chars (max ${MAX_PROMPT_CHARS})`,
+				`Lane "${lane.id}" combined common_prompt + prompt is ${prompt.length} chars ` +
+					`(common_prompt ${commonPrompt.length} + separator ${COMMON_PROMPT_SEPARATOR.length} + ` +
+					`lane prompt ${lane.prompt.length}; max ${MAX_PROMPT_CHARS})`,
 			);
 		}
 		return { ...lane, prompt };

@@ -1543,13 +1543,17 @@ describe('common_prompt (shared lane context)', () => {
 		expect(result.lanes[1].prompt).toBe('SHARED CONTEXT\n\nfocus B');
 	});
 
-	test('applyCommonPrompt returns lanes unchanged when common_prompt is omitted', () => {
+	test('applyCommonPrompt returns a fresh, equal array when common_prompt is omitted', () => {
 		const lanes = [{ id: 'a', agent: 'explorer', prompt: 'focus A' }];
 		const result = _test_exports.applyCommonPrompt(lanes, undefined);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		// passthrough: same reference, no allocation
-		expect(result.lanes).toBe(lanes);
+		// Contract: the caller always owns the returned array (a fresh copy), so
+		// mutating it can never affect the originals. Same contents, new reference.
+		expect(result.lanes).toEqual(lanes);
+		expect(result.lanes).not.toBe(lanes);
+		result.lanes.push({ id: 'z', agent: 'explorer', prompt: 'injected' });
+		expect(lanes).toHaveLength(1);
 	});
 
 	test('applyCommonPrompt handles multi-line common_prompt and special characters correctly', () => {
