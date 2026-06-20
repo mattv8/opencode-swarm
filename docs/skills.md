@@ -32,7 +32,7 @@ During phase execution, knowledge is **retrieved and injected** into the archite
    - Unified `searchKnowledge()` queries both swarm and hive
    - Near-duplicate removal via Jaccard bigram similarity (threshold 0.6)
     - Action-aware ranking: triggers, `applies_to_agents/tools`, priority level, trigger phrase boost
-    - For ranking algorithm details, see [Knowledge System](knowledge.md#query-ranking).
+    - For ranking algorithm details, see [Knowledge System](knowledge.md#query-and-injection).
 
 2. **Injection Budget** (context-adaptive)
    - \>60% headroom: full budget (up to 5 entries, 2000 chars)
@@ -65,7 +65,7 @@ During phase execution, knowledge is **retrieved and injected** into the archite
    - Chat-visible `KNOWLEDGE_*` markers are the enforcement gate
    - `knowledge_receipt` tool records outcomes to `.swarm/knowledge-application.jsonl`
     - Counters: `shown_count`, `acknowledged_count`, `applied_explicit_count`, `ignored_count`, `violated_count`, `succeeded_after_shown_count`, `failed_after_shown_count`
-    - See [Evidence and Telemetry](evidence-and-telemetry.md) for the outcome persistence schema.
+    - See [Knowledge System](knowledge.md#retrieval-outcome-counters) for the counter schema.
 
 ### Phase 3: Feedback & Learning
 
@@ -80,7 +80,7 @@ After phase completion, feedback is collected:
 2. **Knowledge Durability**
    - **TTL decay**: Active entries age every successful phase (increments `phases_alive`)
     - Archived when `phases_alive > max_phases` (default 10 phases for general, 3 for `todo`)
-    - Archived entries are excluded from query results but preserved on disk (not deleted). They can be restored via the quarantine/workflow tools if needed.
+    - Archived entries are excluded from query results but preserved on disk (not deleted). They can be manually restored via `/swarm knowledge restore` if needed. Note that TTL-archived entries are in a distinct state from quarantined entries.
    - **Promoted entries are TTL-exempt** — live until explicitly quarantined
    - Quarantine workflow: `/swarm knowledge quarantine <id> [reason]` hides but preserves
 
@@ -163,7 +163,7 @@ Agent task / curator review
    - Becomes available to all agents via `SKILLS:` delegation field
    - Locked against overwrite (requires `force=true` if generator marker removed)
     - Rejected candidates recorded to `.swarm/skills/rejected-edits.jsonl`
-    - Entries are added to this file when `isRejectedSkillContent` detects a hash match with previously rejected content, or when skill evaluation fails required-phrases or forbidden-phrases checks.
+    - Entries are added to this file by `appendRejectedSkillEdit` when skill evaluation fails (e.g., required-phrases or forbidden-phrases checks). `isRejectedSkillContent` reads this file later to detect hash matches with previously rejected content.
 
 5. **Ongoing Refinement** — `skill_regenerate <slug>` rebuilds active skill from updated source knowledge
 
@@ -339,7 +339,7 @@ When reviewing a draft skill before applying:
 | **Generated skill** | Compilable SKILL.md derived from mature knowledge (review checklist, triggers, directives) |
 | **Maturity gate** | Decision logic determining if an entry can become a skill (outcome signal, confidence, confirmations) |
 | **Outcome signal** | Rollup of `applied_explicit_count`, `succeeded_after_shown_count`, `violated_count`, etc. |
-| **Knowledge injection** | Retrieval of relevant entries and inclusion in architect's prompt at phase start — see [knowledge.md#injection](knowledge.md#injection) |
+| **Knowledge injection** | Retrieval of relevant entries and inclusion in architect's prompt at phase start — see [knowledge.md#query-and-injection](knowledge.md#query-and-injection) |
 | **Promotion** | Swarm → Hive transition after threshold (3 phases confirmed, fast-track, or 90-day age) |
 | **v2 directives** | Optional fields on knowledge entries (`triggers`, `required_actions`, `applies_to_agents/tools`, priority) |
 | **Knowledge application contract** | Architect MUST emit `KNOWLEDGE_APPLIED/IGNORED/VIOLATED` for applicable directives |
