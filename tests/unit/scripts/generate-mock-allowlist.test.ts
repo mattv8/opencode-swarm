@@ -1,8 +1,8 @@
-import { describe, expect, test, afterEach } from 'bun:test';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 /**
  * Test suite for scripts/generate-mock-allowlist.sh
@@ -12,7 +12,11 @@ import { spawnSync } from 'node:child_process';
 
 const isWindows = process.platform === 'win32';
 const REPO_ROOT = path.resolve(__dirname, '../../../');
-const SCRIPT_PATH = path.join(REPO_ROOT, 'scripts', 'generate-mock-allowlist.sh');
+const SCRIPT_PATH = path.join(
+	REPO_ROOT,
+	'scripts',
+	'generate-mock-allowlist.sh',
+);
 const ALLOWLIST_PATH = path.join(REPO_ROOT, 'scripts', 'mock-allowlist.txt');
 
 function runGenerateAllowlist(checkMode = false): {
@@ -57,9 +61,15 @@ describe('generate-mock-allowlist.sh', () => {
 
 	test('should detect when allowlist is out of sync', () => {
 		if (isWindows) return;
-		const tempAllowlist = path.join(os.tmpdir(), 'mock-allowlist-drift-' + Date.now());
+		const tempAllowlist = path.join(
+			os.tmpdir(),
+			'mock-allowlist-drift-' + Date.now(),
+		);
 		fs.copyFileSync(ALLOWLIST_PATH, tempAllowlist);
-		fs.appendFileSync(tempAllowlist, '\n# drift-detection-test-only\nsrc/does-not-exist\n');
+		fs.appendFileSync(
+			tempAllowlist,
+			'\n# drift-detection-test-only\nsrc/does-not-exist\n',
+		);
 
 		fs.copyFileSync(tempAllowlist, ALLOWLIST_PATH);
 
@@ -76,7 +86,9 @@ describe('generate-mock-allowlist.sh', () => {
 		if (isWindows) return;
 		const result = runGenerateAllowlist(false);
 		expect(result.stderr).toContain('Scanning test files');
-		expect(result.stderr).toMatch(/Updated scripts\/mock-allowlist\.txt with \d+ entries/);
+		expect(result.stderr).toMatch(
+			/Updated scripts\/mock-allowlist\.txt with \d+ entries/,
+		);
 		expect(result.exitCode).toBe(0);
 	});
 

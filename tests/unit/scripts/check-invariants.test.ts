@@ -1,8 +1,8 @@
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 /**
  * Test suite for scripts/check-invariants.sh
@@ -16,14 +16,23 @@ import { spawnSync } from 'node:child_process';
 const isWindows = process.platform === 'win32';
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 const SCRIPT_PATH = path.join(REPO_ROOT, 'scripts', 'check-invariants.sh');
-const LIB_PATH = path.join(REPO_ROOT, 'scripts', 'lib', 'normalize-mock-target.sh');
+const LIB_PATH = path.join(
+	REPO_ROOT,
+	'scripts',
+	'lib',
+	'normalize-mock-target.sh',
+);
 const ALLOWLIST_PATH = path.join(REPO_ROOT, 'scripts', 'mock-allowlist.txt');
 
 /**
  * Helper to run check-invariants.sh from a given directory.
  * Skips on Windows where bash.exe is the WSL stub.
  */
-function runCheckInvariants(cwd: string): { stdout: string; stderr: string; exitCode: number } {
+function runCheckInvariants(cwd: string): {
+	stdout: string;
+	stderr: string;
+	exitCode: number;
+} {
 	if (isWindows) {
 		throw new Error('bash not available on Windows');
 	}
@@ -45,15 +54,27 @@ function runCheckInvariants(cwd: string): { stdout: string; stderr: string; exit
  * Set up a temp fixture dir with a copy of the scripts and controlled src/tests
  */
 function setupFixtureDir(fixtureName: string): string {
-	const fixtureDir = path.join(os.tmpdir(), `check-invariants-${fixtureName}-${Date.now()}`);
+	const fixtureDir = path.join(
+		os.tmpdir(),
+		`check-invariants-${fixtureName}-${Date.now()}`,
+	);
 	fs.mkdirSync(path.join(fixtureDir, 'scripts', 'lib'), { recursive: true });
 	fs.mkdirSync(path.join(fixtureDir, 'src', 'tools'), { recursive: true });
 	fs.mkdirSync(path.join(fixtureDir, 'src', 'hooks'), { recursive: true });
 	fs.mkdirSync(path.join(fixtureDir, 'tests'), { recursive: true });
 
-	fs.copyFileSync(SCRIPT_PATH, path.join(fixtureDir, 'scripts', 'check-invariants.sh'));
-	fs.copyFileSync(LIB_PATH, path.join(fixtureDir, 'scripts', 'lib', 'normalize-mock-target.sh'));
-	fs.copyFileSync(ALLOWLIST_PATH, path.join(fixtureDir, 'scripts', 'mock-allowlist.txt'));
+	fs.copyFileSync(
+		SCRIPT_PATH,
+		path.join(fixtureDir, 'scripts', 'check-invariants.sh'),
+	);
+	fs.copyFileSync(
+		LIB_PATH,
+		path.join(fixtureDir, 'scripts', 'lib', 'normalize-mock-target.sh'),
+	);
+	fs.copyFileSync(
+		ALLOWLIST_PATH,
+		path.join(fixtureDir, 'scripts', 'mock-allowlist.txt'),
+	);
 
 	return fixtureDir;
 }
@@ -68,14 +89,23 @@ describe('check-invariants.sh', () => {
 
 	test('should detect missing mock allowlist file', () => {
 		if (isWindows) return;
-		const fixtureDir = path.join(os.tmpdir(), 'check-invariants-missing-allowlist-' + Date.now());
+		const fixtureDir = path.join(
+			os.tmpdir(),
+			'check-invariants-missing-allowlist-' + Date.now(),
+		);
 		fs.mkdirSync(path.join(fixtureDir, 'scripts', 'lib'), { recursive: true });
 		fs.mkdirSync(path.join(fixtureDir, 'src', 'tools'), { recursive: true });
 		fs.mkdirSync(path.join(fixtureDir, 'src', 'hooks'), { recursive: true });
 		fs.mkdirSync(path.join(fixtureDir, 'tests'), { recursive: true });
 
-		fs.copyFileSync(SCRIPT_PATH, path.join(fixtureDir, 'scripts', 'check-invariants.sh'));
-		fs.copyFileSync(LIB_PATH, path.join(fixtureDir, 'scripts', 'lib', 'normalize-mock-target.sh'));
+		fs.copyFileSync(
+			SCRIPT_PATH,
+			path.join(fixtureDir, 'scripts', 'check-invariants.sh'),
+		);
+		fs.copyFileSync(
+			LIB_PATH,
+			path.join(fixtureDir, 'scripts', 'lib', 'normalize-mock-target.sh'),
+		);
 		// Deliberately do NOT copy the allowlist
 
 		const result = runCheckInvariants(fixtureDir);
@@ -88,7 +118,9 @@ describe('check-invariants.sh', () => {
 	test('should find process.cwd() violations if they exist', () => {
 		if (isWindows) return;
 		const result = runCheckInvariants(REPO_ROOT);
-		expect(result.stdout).toContain('Check 2: process.cwd() ban in tools/hooks');
+		expect(result.stdout).toContain(
+			'Check 2: process.cwd() ban in tools/hooks',
+		);
 	});
 
 	test('should validate mock.module targets against allowlist', () => {
@@ -96,7 +128,9 @@ describe('check-invariants.sh', () => {
 		const result = runCheckInvariants(REPO_ROOT);
 		expect(result.stdout).toContain('Check 3: mock.module allowlist');
 		if (result.exitCode === 0) {
-			expect(result.stdout).toContain('All engineering invariant checks passed');
+			expect(result.stdout).toContain(
+				'All engineering invariant checks passed',
+			);
 		}
 	});
 
@@ -121,11 +155,11 @@ describe('check-invariants.sh', () => {
 
 		fs.writeFileSync(
 			path.join(fixtureDir, 'src', 'bun-compat.ts'),
-			'import { spawnSync } from "node:child_process";\nspawnSync("cmd", []);\n'
+			'import { spawnSync } from "node:child_process";\nspawnSync("cmd", []);\n',
 		);
 		fs.writeFileSync(
 			path.join(fixtureDir, 'src', 'not-bun-compat.ts'),
-			'import { spawnSync } from "node:child_process";\nspawnSync("cmd", []);\n'
+			'import { spawnSync } from "node:child_process";\nspawnSync("cmd", []);\n',
 		);
 
 		const result = runCheckInvariants(fixtureDir);
@@ -141,11 +175,11 @@ describe('check-invariants.sh', () => {
 
 		fs.writeFileSync(
 			path.join(fixtureDir, 'src', 'tools', 'create-tool.ts'),
-			'process.cwd();\n'
+			'process.cwd();\n',
 		);
 		fs.writeFileSync(
 			path.join(fixtureDir, 'src', 'tools', 'create-tool-helper.ts'),
-			'process.cwd();\n'
+			'process.cwd();\n',
 		);
 
 		const result = runCheckInvariants(fixtureDir);
