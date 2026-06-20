@@ -38,7 +38,7 @@ There is NO hard cap on the internal inventory. Record every material uncertaint
 Classify each item as exactly one of:
 - `self_resolved`: answered from the user request, spec, plan, codebase reality check, `.swarm/context.md`, repo conventions, or an informed default. **If the default is not directly supported by user request, spec, or recorded context, classify as `user_decision` rather than `self_resolved`.**
 - `critic_resolved`: sent to Critic Sounding Board and resolved by the critic.
-- `research_needed`: needs SME/explorer/domain lookup before user escalation.
+- `research_needed`: needs SME/explorer/domain lookup before user escalation. **Important:** If research is ongoing, monitor the timeout configured in `.swarm/config.json` under `research_needed_timeout_ms` (default: 300000ms / 5 minutes). If research does not complete before the timeout expires, automatically reclassify the item to `user_decision` with a note that research was incomplete, then surface it to the user. This prevents the clarification funnel from stalling while waiting for external research.
 - `user_decision`: only the user can decide because it affects product scope, risk tolerance, policy, budget, UX, rollout, or destructive behavior.
 - `deferred_nonblocking`: useful follow-up detail that does not block a correct initial plan and can be explicitly recorded as an assumption or follow-up.
 
@@ -101,3 +101,11 @@ The critic may improve wording or confirm prior context, but these categories MU
 ### Assumptions Recording
 
 All items resolved in Stages 2-3 (self_resolved, critic_resolved, deferred_nonblocking) MUST be recorded as explicit assumptions in the spec, plan, or `.swarm/context.md`. Silently dropping resolved uncertainties is a protocol violation — every uncertainty that entered the funnel must have a recorded outcome.
+
+### Mechanical Enforcement of DROP Protection
+
+**Implementation Note:** The hard constraint against `DROP` on always-surface items (Stage 3 line 58) is currently enforced via skill instructions to the architect. A lightweight runtime enforcement mechanism is recommended: when processing the critic sounding board verdict response, validate that any items tagged as "always-surface" do not receive `UNNECESSARY`/`DROP` verdicts. If a DROP verdict is encountered on an always-surface item, override it to `APPROVED`/`ASK_USER` at the code level rather than relying solely on prompt-based enforcement.
+
+This mechanical enforcement prevents the following failure mode: the architect prompt instructs the override, but due to parsing errors, context limits, or model behavior variance, the DROP verdict is mistakenly applied to an always-surface item and silently accepted. The validation should occur in the decision-packet assembly code (when building the final clarification packet to surface to the user) and should emit a warning log when an override is applied.
+
+See `.opencode/skills/clarify/SKILL.md` and `.opencode/skills/plan/SKILL.md` for the full funnel protocol.

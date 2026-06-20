@@ -79,8 +79,31 @@ describe('plan SKILL.md Clarification Funnel verification', () => {
 		expect(stage3Section).toContain('Overconfidence guard');
 	});
 
-	test('5 — "Always-Surface Categories" section present', () => {
+	test('5 — "Always-Surface Categories" section present with all 13 categories', () => {
 		expect(opencodeContent).toContain('#### Always-Surface Categories');
+		
+		// All 13 always-surface categories that MUST be enumerated
+		const expectedCategories = [
+			'Scope boundaries',
+			'Data loss or destructive behavior',
+			'Security/privacy risk tolerance',
+			'Backward compatibility or migration policy',
+			'Breaking changes to existing APIs, contracts, or interfaces',
+			'New dependency additions or version changes',
+			'Deprecation decisions for existing features or APIs',
+			'Cross-platform impact (Windows/macOS/Linux differences)',
+			'Cost/performance tradeoffs',
+			'User-visible behavior and UX choices',
+			'Release/rollout strategy',
+			'Optional QA gates or stricter enforcement modes',
+			'Any choice that changes whether the work is advisory vs hard-blocking',
+		];
+		
+		for (const category of expectedCategories) {
+			expect(opencodeContent, `Missing always-surface category: ${category}`).toContain(
+				category,
+			);
+		}
 	});
 
 	test('6 — "Assumptions Recording" section present', () => {
