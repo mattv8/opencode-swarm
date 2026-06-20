@@ -154,7 +154,12 @@ export function isInDeclaredScope(
  */
 export function redactShellCommand(cmd: string): string {
 	if (typeof cmd !== 'string') return '';
-	let out = cmd.replace(
+	let out = cmd
+		.replace(/\/home\/[^/\s"']+/g, '~')
+		.replace(/[A-Za-z]:\\Users\\[^\\\s"']+/g, '~')
+		.replace(/\/Users\/[^/\s"']+/g, '~');
+
+	out = out.replace(
 		/\b([A-Z_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_]?KEY|APIKEY|AUTH|CREDENTIAL|PRIVATE[_]?KEY|ACCESS[_]?KEY|_KEY)[A-Z_0-9]*)\s*=\s*(\S+)/gi,
 		'$1=[REDACTED]',
 	);

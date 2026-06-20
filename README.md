@@ -1080,7 +1080,9 @@ Control how tool outputs are summarized for LLM context.
 | `/swarm agents` | Registered agents with models and permissions |
 | `/swarm history` | Completed phases with status |
 | `/swarm config` | Current resolved configuration |
-| `/swarm diagnose` | Health check for `.swarm/` files and config |
+| `/swarm diagnose` | Health check for `.swarm/` files, config, and sandbox executor status |
+| `/swarm guardrail explain [--agent <role>] [--scope <path>] [--write <path>...] [--] <command>` | Dry-run guardrail decisions — report what would be allowed/blocked without executing anything |
+| `/swarm guardrail-log [--blocks-only]` | Read and print the guardrail decision log most-recent-first; `--blocks-only` shows only block decisions |
 | `/swarm export` | Export plan and context as portable JSON |
 | `/swarm evidence [task]` | Evidence bundles for a task or all tasks |
 | `/swarm archive [--dry-run]` | Archive old evidence with retention policy |

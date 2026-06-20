@@ -71,6 +71,8 @@ A 3-line learning summary is automatically injected into the curator phase diges
 
 Run a health check on `.swarm/` files, plan structure, and evidence completeness. Reports missing files, schema mismatches, and recovery steps.
 
+A **Sandbox** health-check line is also reported, showing the detected executor mechanism (bubblewrap / sandbox-exec / windows-runner / none), availability, and whether commands are actually being sandboxed (sandboxing / silent pass-through / none). This is advisory only — absence of a sandbox executor never causes a hard failure.
+
 ### `/swarm history`
 
 Show completed phases with status icons.
@@ -82,6 +84,60 @@ Show completed phases with status icons.
 ### `/swarm agents`
 
 List all registered agents with their model, temperature, read-only status, and guardrail profile.
+
+---
+
+## Guardrails
+
+### `/swarm guardrail explain [--agent <role>] [--scope <path>] [--write <path>...] [--] <command>`
+
+Dry-run guardrail decisions for a shell command or write target — reports what the guardrail system **would** do without executing anything. Agent-callable via `swarm_command`.
+
+**Shell mode** (default — pass a command string after any flags):
+
+```text
+/swarm guardrail explain rm -rf node_modules/
+/swarm guardrail explain --agent reviewer git push --force origin main
+```
+
+Returns: decision (`allow`/`block`), firing rule, resolved scope, and detected write categories.
+
+**Write mode** (`--write`, repeatable — inspect individual file/directory targets):
+
+```text
+/swarm guardrail explain --write src/hooks/guardrails.ts --write .swarm/plan.json
+```
+
+Returns per-target: decision, firing rule, resolved scope, and zone classification.
+
+**Flags:**
+
+| Flag | Effect |
+|------|--------|
+| `--agent <role>` | Simulate decisions as if issued by a different agent role (e.g., `reviewer`, `test_engineer`) |
+| `--scope <path>` | Simulate decisions scoped to a specific working directory |
+| `--write <path>` | Inspect a write target instead of a shell command (repeatable for multiple targets) |
+| `--` | Explicit flag terminator — required when `<command>` starts with `--` |
+
+Output is fully advisory and redacted. No side effects, no writes, no process execution.
+
+### `/swarm guardrail-log [--blocks-only]`
+
+Read and print the unified guardrail decision log (`.swarm/session/shell-audit.jsonl`) most-recent-first. Agent-callable via `swarm_command`.
+
+```text
+/swarm guardrail-log
+/swarm guardrail-log --blocks-only
+```
+
+**`--blocks-only`** limits output to block decisions only (`file_write`, `scope_violation`, `destructive_block`). Legacy shell command entries and sandbox wrap/skip entries are excluded.
+
+**Output characteristics:**
+
+- Entries sorted most-recent-first
+- Commands and paths are redacted
+- Missing log file → friendly message: "No guardrail decisions recorded yet."
+- On-demand only — no hot-path cost; reads the log only when invoked
 
 ---
 

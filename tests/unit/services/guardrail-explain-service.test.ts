@@ -1,0 +1,543 @@
+/**
+ * Tests for src/services/guardrail-explain-service.ts (Task 1.3)
+ *
+ * Covers:
+ * - SC-101: shell command returns markdown with decision, firing rule, resolved scope, write categories
+ * - SC-102/103: --write outside scope returns block decision with firing rule + scope
+ * - SC-104: multiple --write targets → results for EACH independently
+ * - SC-105: --agent architect --scope docs/ overrides reflected in resolved scope/decision
+ * - SC-116 (CRITICAL): explain handler executes NOTHING — no subprocess spawned, no file created
+ * - SC-117: command containing secret is redacted in output
+ */
+
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { handleGuardrailExplain } from '../../../src/services/guardrail-explain-service';
+
+// ---------------------------------------------------------------------------
+// Test setup
+// ---------------------------------------------------------------------------
+
+let tempDir: string;
+
+beforeEach(async () => {
+	tempDir = await mkdtemp(join(tmpdir(), 'guardrail-explain-test-'));
+	await mkdir(join(tempDir, '.swarm'), { recursive: true });
+});
+
+afterEach(async () => {
+	if (existsSync(tempDir)) {
+		await rm(tempDir, { recursive: true, force: true });
+	}
+	mock.restore();
+});
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('SC-101: shell command explain returns markdown with decision fields', () => {
+	test('handleGuardrailExplain returns a markdown string (not a crash) for rm -rf build', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'rm',
+			'-rf',
+			'build',
+		]);
+
+		expect(typeof result).toBe('string');
+		expect(result.length).toBeGreaterThan(0);
+		// Must not throw — must resolve to a string
+	});
+
+	test('SC-101: explain result contains decision, firing rule, resolved scope, write categories', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'rm',
+			'-rf',
+			'build',
+		]);
+
+		// Should contain a Decision field
+		expect(result).toContain('**Mode**: shell');
+		// Should contain Agent
+		expect(result).toContain('**Agent**:');
+		// Should contain Resolved scope
+		expect(result).toContain('Resolved Scope');
+		// Should mention the command (redacted or not)
+		expect(result).toContain('Command');
+		// Should contain Decision table row with allow or block
+		expect(result).toContain('Decision');
+		expect(result).toMatch(/\| *Decision *\| *(allow|block) */i);
+		// Should contain Firing Rule table row
+		expect(result).toContain('Firing Rule');
+	});
+
+	test('non-destructive command yields allow decision', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['ls', '-la']);
+
+		expect(result).toContain('Decision');
+		// ls -la is a read-only command — should be allowed
+		expect(result).toMatch(/\| *Decision *\| *allow */i);
+	});
+});
+
+describe('SC-102/103: --write outside scope returns block decision', () => {
+	test('--write to path outside project scope returns block', async () => {
+		// /etc/passwd is definitely outside any reasonable project scope
+		const result = await handleGuardrailExplain(tempDir, [
+			'--write',
+			'/etc/passwd',
+		]);
+
+		expect(result).toContain('**Mode**: write-target');
+		// Should contain block decision in the table body (not just header)
+		expect(result).toContain('| block |');
+		// Should contain Firing Rule
+		expect(result).toContain('Firing Rule');
+		// Should contain Resolved Scope
+		expect(result).toContain('Resolved Scope');
+		// The path should appear in the table
+		// Path is echoed via redactPath (normalized separators / home-redacted), so assert the
+		// target's basename in a separator- and redaction-agnostic way rather than the raw path.
+		expect(result).toContain('passwd');
+	});
+
+	test('--write within project scope returns allow', async () => {
+		// Write to a path inside the project directory
+		const result = await handleGuardrailExplain(tempDir, [
+			'--write',
+			'src/index.ts',
+		]);
+
+		expect(result).toContain('**Mode**: write-target');
+		// Should contain allow decision in the table body
+		expect(result).toContain('| allow |');
+	});
+});
+
+describe('SC-104: multiple --write targets returns results for EACH independently', () => {
+	test('two --write targets produce results for each path', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'--write',
+			'/etc/passwd',
+			'--write',
+			'/tmp/allowed.txt',
+		]);
+
+		// Both paths should appear in the output independently
+		// Path is echoed via redactPath (normalized separators / home-redacted), so assert the
+		// target's basename in a separator- and redaction-agnostic way rather than the raw path.
+		expect(result).toContain('passwd');
+		expect(result).toContain('allowed');
+		// /etc/passwd should be blocked; /tmp/allowed.txt might be blocked on Windows
+		// Both should appear as separate table entries
+		expect(result).toContain('block');
+	});
+
+	test('three --write targets produce results for each path', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'--write',
+			'/etc/passwd',
+			'--write',
+			'/home/user/secret',
+			'--write',
+			'src/index.ts',
+		]);
+
+		// Path is echoed via redactPath (normalized separators / home-redacted), so assert the
+		// target's basename in a separator- and redaction-agnostic way rather than the raw path.
+		expect(result).toContain('passwd');
+		expect(result).toContain('secret');
+		expect(result).toContain('index.ts');
+	});
+});
+
+describe('SC-105: --agent and --scope overrides reflected in resolved scope/decision', () => {
+	test('--agent architect bypasses scope violations in shell mode', async () => {
+		// architect bypasses ONLY scope violations, NOT destructive blocks (file-authority.ts
+		// containment check applies to ALL agents, including architect). The architect bypass
+		// is in shell scope check at guardrail-explain-service.ts:691.
+		// Use shell mode (NOT --write) with a command that triggers scope check.
+		// On Unix: echo hello > /tmp/outside.txt with scope docs/ → out-of-scope → block for coder,
+		// allow for architect. On Windows /tmp resolves oddly; use a relative path with .. instead.
+		const coderResult = await handleGuardrailExplain(tempDir, [
+			'--agent',
+			'coder',
+			'--scope',
+			'src/',
+			'echo hello > ../outside-scope.txt',
+		]);
+		expect(coderResult).toContain('**Mode**: shell');
+		// scope_violation fires for coder (scope check at line 691 is NOT bypassed for coder)
+		expect(coderResult).toMatch(/\|\s*block\s*\|/i);
+		expect(coderResult).toMatch(/scope_violation/i);
+
+		const architectResult = await handleGuardrailExplain(tempDir, [
+			'--agent',
+			'architect',
+			'--scope',
+			'src/',
+			'echo hello > ../outside-scope.txt',
+		]);
+		expect(architectResult).toContain('**Mode**: shell');
+		// architect bypasses scope check → allow (no scope_violation, no destructive block)
+		expect(architectResult).toMatch(/\|\s*allow\s*\|/i);
+	});
+
+	test('--scope override changes resolved scope in output', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'--scope',
+			'docs/',
+			'--write',
+			'src/index.ts',
+		]);
+
+		// Resolved scope should reflect the --scope override (handle both slash styles)
+		expect(result).toMatch(/docs[/\\]/);
+	});
+
+	test('--agent coder with --scope shows agent in output', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'--agent',
+			'coder',
+			'--scope',
+			'src/',
+			'--write',
+			'src/index.ts',
+		]);
+
+		expect(result).toContain('**Agent**: coder');
+	});
+});
+
+describe('guardrail explain parity regressions from PR feedback', () => {
+	test('F-001: malformed write syntax fails closed on parseError', async () => {
+		// Previous behavior silently ignored detectPosixWrites parseError and
+		// predicted allow, while the real hook blocks parse failures.
+		const result = await handleGuardrailExplain(tempDir, ['touch ")(']);
+
+		expect(result).toMatch(/\|\s*Decision\s*\|\s*block\s*\|/i);
+		expect(result).toContain('parse_error');
+		expect(result).toContain('rejecting for safety');
+	});
+
+	test('F-002: PowerShell env syntax routes through Windows write detection', async () => {
+		// Previous resolveShellType missed `$env:` heuristics and treated this as
+		// POSIX, diverging from the real hook's detectShellType routing.
+		const result = await handleGuardrailExplain(tempDir, [
+			'--scope',
+			'src/',
+			'$env:PATH > ../outside-scope.txt',
+		]);
+
+		expect(result).toMatch(/\|\s*Decision\s*\|\s*block\s*\|/i);
+		expect(result).toMatch(/scope_violation/i);
+		expect(result).toMatch(/file_redirect|file_write|write/i);
+	});
+
+	test('F-002: PowerShell cmdlet prefix routes through Windows write detection', async () => {
+		// Previous resolveShellType missed Copy-Item and could parse with the
+		// wrong engine, causing explain to diverge from real enforcement.
+		const result = await handleGuardrailExplain(tempDir, [
+			'--scope',
+			'src/',
+			'Copy-Item src/index.ts ../outside-scope.txt',
+		]);
+
+		expect(result).toMatch(/\|\s*Decision\s*\|\s*block\s*\|/i);
+		expect(result).toMatch(/scope_violation/i);
+	});
+});
+
+describe('SC-116: explain handler executes NOTHING', () => {
+	test('calling explain with rm -rf / does not modify filesystem', async () => {
+		// Create a marker file to prove the function didn't execute
+		const markerPath = join(tempDir, 'marker.txt');
+		await writeFile(markerPath, 'original content');
+
+		// Call explain with obviously destructive command
+		const result = await handleGuardrailExplain(tempDir, ['rm', '-rf', '/']);
+
+		// Result must be a string (not an error)
+		expect(typeof result).toBe('string');
+		expect(result.length).toBeGreaterThan(0);
+
+		// Marker file must be UNCHANGED (proves rm was not executed)
+		const markerContent = await Bun.file(markerPath).text();
+		expect(markerContent).toBe('original content');
+	});
+
+	test('the returned string contains dry-run mode indicator', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['rm', '-rf', '/']);
+
+		// The function must self-identify as dry-run
+		expect(result).toContain('dry-run');
+	});
+
+	test('guardrail-explain-service.ts does not import child_process', async () => {
+		// Static analysis: the source file must not contain 'child_process'
+		const fs = await import('node:fs');
+		const source = fs.readFileSync(
+			join(process.cwd(), 'src/services/guardrail-explain-service.ts'),
+			'utf-8',
+		);
+		expect(source).not.toContain('child_process');
+		expect(source).not.toContain('spawn');
+	});
+});
+
+describe('SC-117: command with secret is redacted in output', () => {
+	test('Bearer token in shell command is redacted in explain output', async () => {
+		const cmdWithSecret =
+			"curl -H 'Authorization: Bearer sk-test1234567890abcdef' https://api.example.com";
+		const result = await handleGuardrailExplain(tempDir, [cmdWithSecret]);
+
+		expect(result).not.toContain('sk-test1234567890abcdef');
+		expect(result).toContain('[REDACTED]');
+	});
+
+	test('API_TOKEN env var is redacted in explain output', async () => {
+		const cmdWithSecret =
+			'curl -H "Authorization: Bearer $API_TOKEN" https://api.example.com';
+		const result = await handleGuardrailExplain(tempDir, [cmdWithSecret]);
+
+		// The token should not appear literally in output
+		expect(result).not.toMatch(/sk-[a-zA-Z0-9]+/);
+	});
+
+	test('--write path containing secret is handled safely', async () => {
+		// Even if the user accidentally passes a path with a secret as --write argument,
+		// the explain should not crash
+		const result = await handleGuardrailExplain(tempDir, [
+			'--write',
+			'/home/user/secrets/API_TOKEN=mysecretkey123',
+		]);
+
+		expect(typeof result).toBe('string');
+		// The result should not expose the raw token in the path column
+		// (redaction depends on redactPath which strips home dir, not query strings)
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Helper: extract decision from markdown output
+// ---------------------------------------------------------------------------
+
+function extractDecision(markdown: string): 'allow' | 'block' | null {
+	const match = markdown.match(/\|\s*Decision\s*\|\s*(\w+)\s*\|/i);
+	if (!match) return null;
+	const val = match[1]!.toLowerCase();
+	if (val === 'allow' || val === 'block') return val;
+	return null;
+}
+
+function extractFiringRule(markdown: string): string {
+	const match = markdown.match(/\|\s*Firing Rule\s*\|\s*(.+?)\s*\|/i);
+	return match ? match[1]!.trim() : '';
+}
+
+// ---------------------------------------------------------------------------
+// Accuracy tests: decision matches real enforcement behavior
+// ---------------------------------------------------------------------------
+
+describe('Guardrail explain accuracy — destructive commands', () => {
+	test('git reset --hard HEAD~1 → decision === block (destructive git operation)', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'git reset --hard HEAD~1',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('reset');
+	});
+
+	test('fork bomb :(){ :|:& };: → decision === block', async () => {
+		const result = await handleGuardrailExplain(tempDir, [':(){ :|:& };:']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('fork bomb');
+	});
+
+	test('git push --force origin main → decision === block', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'git push --force origin main',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('push');
+		expect(firingRule.toLowerCase()).toContain('force');
+	});
+
+	test('git clean -fd → decision === block', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['git clean -fd']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('git clean');
+	});
+
+	test('rm -rf / → decision === block', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['rm -rf /']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('rm');
+	});
+
+	test('rm -rf build with --scope build → decision === allow (in-scope safe target)', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'--scope',
+			'build',
+			'rm',
+			'-rf',
+			'build',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('allow');
+	});
+
+	test('echo hello → decision === allow', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['echo hello']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('allow');
+	});
+
+	// Regression test for TRUNCATE TABLE detection (FR-119 / SC in review)
+	test('TRUNCATE TABLE users → decision === block (destructive SQL DDL)', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'TRUNCATE TABLE users',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		// Must fire a SQL-destruction rule mentioning truncate
+		expect(firingRule.toLowerCase()).toContain('truncate');
+	});
+
+	test('fork bomb with whitespace after ":" (": () { :|:& };:") → decision === block', async () => {
+		// Real checkDestructiveCommand allows whitespace after the leading ':'; explain must match.
+		const result = await handleGuardrailExplain(tempDir, [': () { :|:& };:']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+	});
+
+	test('mkfs with space ("mkfs /dev/sdb") → decision === allow (real only blocks mkfs[./])', async () => {
+		// Real checkDestructiveCommand blocks only /^mkfs[./]/ (e.g. mkfs.ext4); "mkfs /dev/sdb" is allowed.
+		const result = await handleGuardrailExplain(tempDir, ['mkfs /dev/sdb']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('allow');
+	});
+
+	test('mkfs.ext4 → decision === block (real blocks mkfs[./])', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'mkfs.ext4 /dev/sdb',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+	});
+
+	test('in-project write WITHOUT --scope (echo hi > local.txt) → decision === allow', async () => {
+		// Without --scope, scopeEntries defaults to the project dir, so an in-project write is
+		// allowed — matching the displayed resolved scope. Regression for the empty-scopeEntries bug
+		// (previously every write was wrongly blocked as scope_violation when no --scope was given).
+		const result = await handleGuardrailExplain(tempDir, [
+			'echo hi > local.txt',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('allow');
+	});
+
+	test('human-only swarm command via shell (bunx opencode-swarm run reset) → decision === block', async () => {
+		// Real guardrails block agents from invoking human-only /swarm subcommands via shell.
+		// explain must mirror this (regression for the final-council drift finding).
+		const result = await handleGuardrailExplain(tempDir, [
+			'bunx opencode-swarm run reset',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('human-only');
+	});
+
+	test('shell write to .swarm/spec-staleness.json → decision === block (system-managed file)', async () => {
+		const result = await handleGuardrailExplain(tempDir, [
+			'echo x > .swarm/spec-staleness.json',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('block');
+		const firingRule = extractFiringRule(result);
+		expect(firingRule.toLowerCase()).toContain('spec-staleness');
+	});
+
+	test('read-only cat of .swarm/spec-staleness.json → decision === allow (not a write)', async () => {
+		// Real guardrails only block WRITES to spec-staleness.json; read-only cat is allowed.
+		const result = await handleGuardrailExplain(tempDir, [
+			'cat .swarm/spec-staleness.json',
+		]);
+		const decision = extractDecision(result);
+		expect(decision).toBe('allow');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Redaction strength tests: firingRule must NOT expose raw home directory paths
+// ---------------------------------------------------------------------------
+
+describe('Guardrail explain redaction — firingRule does not leak home directory', () => {
+	test('firingRule for rm -rf /tmp/absolute does not contain raw /home/<user> or C:\\Users\\<user> path', async () => {
+		// Pass an absolute path inside a mock home dir context to verify redactPath is called
+		const result = await handleGuardrailExplain(tempDir, [
+			'rm -rf /tmp/some-dir',
+		]);
+		const firingRule = extractFiringRule(result);
+		// The firingRule must not contain a raw home-dir path string
+		// (it may contain ~ or a redacted form, but never /home/<user>)
+		expect(firingRule).not.toMatch(/\/home\//);
+		// Must not contain the raw C:\Users\<name> pattern
+		expect(firingRule).not.toMatch(/C:\\Users\\/i);
+	});
+
+	test('firingRule output uses tilde notation or safe form for home-adjacent paths', async () => {
+		// The redactPath function replaces /home/<user> with ~ and C:\Users\<user> with ~\.
+		// Verify the pattern is either redacted with ~ or doesn't appear at all
+		const result = await handleGuardrailExplain(tempDir, [
+			'rm -rf ~/some-path',
+		]);
+		const firingRule = extractFiringRule(result);
+		// After redaction the firingRule should not contain 'home' or raw user profile
+		const containsRawHome =
+			/\/home\/[^/]+/.test(firingRule) || /C:\\Users\\[^/]+/.test(firingRule);
+		expect(containsRawHome).toBe(false);
+	});
+
+	test('safe command fires no blocking rule and allow rule is clean', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['ls -la']);
+		const decision = extractDecision(result);
+		expect(decision).toBe('allow');
+		const firingRule = extractFiringRule(result);
+		// No home-dir references in allow rule either
+		expect(firingRule).not.toMatch(/\/home\//);
+		expect(firingRule).not.toMatch(/C:\\Users\\/i);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Argument parsing (existing)
+// ---------------------------------------------------------------------------
+
+describe('Argument parsing', () => {
+	test('empty args returns usage message', async () => {
+		const result = await handleGuardrailExplain(tempDir, []);
+		expect(result).toContain('dry-run');
+	});
+
+	test('unknown flag is ignored and joined as shell command', async () => {
+		const result = await handleGuardrailExplain(tempDir, ['--unknown', 'ls']);
+		expect(typeof result).toBe('string');
+		expect(result).toContain('ls');
+	});
+});

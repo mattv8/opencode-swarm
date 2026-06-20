@@ -9,7 +9,6 @@
  * target checks, and circuit breaker limits.
  */
 
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { HUMAN_ONLY_SWARM_COMMANDS } from '../../commands/tool-policy.js';
 import {
@@ -44,6 +43,7 @@ import {
 	resolveWriteTargets,
 	type WriteAnalysis,
 } from '../shell-write-detect';
+import { appendGuardrailDecision } from './audit-log';
 import {
 	DC_SAFE_TARGETS,
 	dcCheckJunctionCreation,
@@ -173,44 +173,6 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 				`BLOCKED: Agent "${agentRole}" is not permitted to use the bash/shell interpreter. ` +
 					`Allowed agents: [${interpreterAllowedAgents.map((a) => `"${a}"`).join(', ')}]`,
 			);
-		}
-	}
-
-	/**
-	 * Appends a redacted audit entry to .swarm/session/shell-audit.jsonl.
-	 * Errors are swallowed — audit failures must not block tool execution.
-	 */
-	async function appendShellAuditLog(
-		sessionID: string,
-		tool: string,
-		args: unknown,
-	): Promise<void> {
-		if (!shellAuditEnabled) return;
-		const normalizedAuditTool = normalizeToolName(tool).toLowerCase();
-		if (normalizedAuditTool !== 'bash' && normalizedAuditTool !== 'shell')
-			return;
-
-		const bashArgs = args as Record<string, unknown> | undefined;
-		const rawCmd =
-			typeof bashArgs?.command === 'string' ? bashArgs.command : '';
-		const redacted = redactShellCommand(rawCmd);
-
-		const rawAgent = swarmState.activeAgent.get(sessionID);
-		const agentRole = rawAgent ? stripKnownSwarmPrefix(rawAgent) : 'unknown';
-
-		const entry = JSON.stringify({
-			ts: new Date().toISOString(),
-			sessionID,
-			agent: agentRole,
-			tool,
-			command: redacted,
-		});
-
-		try {
-			await fs.mkdir(path.dirname(shellAuditPath), { recursive: true });
-			await fs.appendFile(shellAuditPath, `${entry}\n`, 'utf-8');
-		} catch {
-			// Intentionally swallowed — audit failures must never block shell execution
 		}
 	}
 
@@ -943,11 +905,30 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		sessionID: string,
 		tool: string,
 		args: unknown,
+		agent: string,
+		command: string,
+		auditPath: string,
+		auditEnabled: boolean,
 	): Promise<void> {
 		if (tool !== 'bash' && tool !== 'shell') return;
 
 		const executor = await getExecutor();
-		if (!executor || !executor.isAvailable()) return;
+		if (!executor || !executor.isAvailable()) {
+			void appendGuardrailDecision(
+				{
+					type: 'sandbox_skip',
+					ts: new Date().toISOString(),
+					sessionID,
+					agent,
+					tool,
+					command,
+					executorMechanism: executor?.mechanism ?? 'none',
+					skipReason: 'executor not available',
+				},
+				{ auditPath, enabled: auditEnabled },
+			);
+			return;
+		}
 
 		const toolArgs = args as Record<string, unknown> | undefined;
 		const rawCommand =
@@ -963,6 +944,19 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		try {
 			const wrappedCommand = executor.wrapCommand(rawCommand, resolved.paths);
 			toolArgs.command = wrappedCommand;
+
+			void appendGuardrailDecision(
+				{
+					type: 'sandbox_wrap',
+					ts: new Date().toISOString(),
+					sessionID,
+					agent,
+					tool,
+					command: rawCommand,
+					executorMechanism: executor.mechanism,
+				},
+				{ auditPath, enabled: auditEnabled },
+			);
 
 			const envOverrides = executor.getEnvOverrides();
 			if (Object.keys(envOverrides).length > 0) {
@@ -1773,16 +1767,186 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		handleTestSuiteBlocking(input.tool, output.args);
 
 		// Shell audit log
-		await appendShellAuditLog(input.sessionID, input.tool, output.args);
+		const normalizedAuditTool = normalizeToolName(input.tool).toLowerCase();
+		if (normalizedAuditTool === 'bash' || normalizedAuditTool === 'shell') {
+			void appendGuardrailDecision(
+				{
+					type: 'shell',
+					ts: new Date().toISOString(),
+					sessionID: input.sessionID,
+					agent: (() => {
+						const rawAgent = swarmState.activeAgent.get(input.sessionID);
+						return rawAgent ? stripKnownSwarmPrefix(rawAgent) : 'unknown';
+					})(),
+					tool: input.tool,
+					command: (() => {
+						const bashArgs = output.args as Record<string, unknown> | undefined;
+						const rawCmd =
+							typeof bashArgs?.command === 'string' ? bashArgs.command : '';
+						return redactShellCommand(rawCmd);
+					})(),
+				},
+				{
+					auditPath: shellAuditPath,
+					enabled: shellAuditEnabled,
+				},
+			);
+		}
 
 		// Interpreter gating
 		handleInterpreterGating(input.sessionID, input.tool);
 
 		// Block destructive shell commands
-		checkDestructiveCommand(input.sessionID, input.tool, output.args);
+		try {
+			checkDestructiveCommand(input.sessionID, input.tool, output.args);
+		} catch (err) {
+			const destructiveCategory = (() => {
+				const msg = err instanceof Error ? err.message : String(err);
+				if (/fork bomb/i.test(msg)) return 'fork bomb';
+				if (/rm\b.*recursive|recursive.*rm/i.test(msg))
+					return 'recursive delete';
+				if (/rmdir|rd\b/i.test(msg)) return 'recursive directory delete';
+				if (/\bdel\b/i.test(msg)) return 'recursive file delete';
+				if (/Remove-Item|ri\b/i.test(msg)) return 'recursive remove';
+				if (/format/i.test(msg)) return 'disk format';
+				if (/robocopy/i.test(msg)) return 'mirror sync';
+				if (/chmod.*000/i.test(msg)) return 'permission wipe';
+				if (/chattr/i.test(msg)) return 'immutable flag';
+				if (/icacls/i.test(msg)) return 'permission deny';
+				if (/\bdd\b/i.test(msg)) return 'data wipe';
+				if (/git push.*--force|git push.*-f/i.test(msg)) return 'force push';
+				if (/git reset/i.test(msg)) return 'git reset';
+				if (/git clean/i.test(msg)) return 'git clean';
+				if (/git worktree/i.test(msg)) return 'git worktree remove';
+				if (/rsync.*--delete/i.test(msg)) return 'rsync delete';
+				if (/kubectl delete/i.test(msg)) return 'kubectl delete';
+				if (/docker system prune/i.test(msg)) return 'docker prune';
+				if (/DROP\s+TABLE|DROP\s+DATABASE|DROP\s+SCHEMA/i.test(msg))
+					return 'sql drop';
+				if (/TRUNCATE\s+TABLE/i.test(msg)) return 'sql truncate';
+				if (/mkfs/i.test(msg)) return 'disk format';
+				if (/\bmv\b.*\.swarm/i.test(msg)) return 'swarm path move';
+				if (/\bmove\b|\bren\b/i.test(msg)) return 'move/rename';
+				if (/Move-Item|Rename-Item/i.test(msg)) return 'move/rename';
+				if (/\brm\b.*\.swarm/i.test(msg)) return 'swarm path delete';
+				if (/cp\b.*\.swarm.*rm\b|rm\b.*\.swarm/i.test(msg))
+					return 'copy-and-delete bypass';
+				if (
+					/rsync.*remove-source|tar.*remove-files|zip.*-m\b|7z.*-sdel/i.test(
+						msg,
+					)
+				)
+					return 'archive delete source';
+				if (/human-only swarm command/i.test(msg))
+					return 'human-only swarm command';
+				if (/spec-staleness\.json/i.test(msg)) return 'system file tampering';
+				return 'destructive shell command';
+			})();
+			void appendGuardrailDecision(
+				{
+					type: 'destructive_block',
+					ts: new Date().toISOString(),
+					sessionID: input.sessionID,
+					agent: (() => {
+						const rawAgent = swarmState.activeAgent.get(input.sessionID);
+						return rawAgent ? stripKnownSwarmPrefix(rawAgent) : 'unknown';
+					})(),
+					tool: input.tool,
+					command: (() => {
+						const bashArgs = output.args as Record<string, unknown> | undefined;
+						const rawCmd =
+							typeof bashArgs?.command === 'string' ? bashArgs.command : '';
+						return rawCmd;
+					})(),
+					destructiveCategory,
+				},
+				{
+					auditPath: shellAuditPath,
+					enabled: shellAuditEnabled,
+				},
+			);
+			throw err;
+		}
 
 		// Shell write scope enforcement
-		checkShellWriteScope(input.sessionID, input.tool, output.args);
+		try {
+			checkShellWriteScope(input.sessionID, input.tool, output.args);
+		} catch (err) {
+			const toolArgs = output.args as Record<string, unknown> | undefined;
+			const declaredScope = resolveDeclaredScope(input.sessionID);
+			const declaredScopeText =
+				declaredScope != null && declaredScope.length > 0
+					? declaredScope.join(', ')
+					: '';
+			const resolvedScopeText =
+				declaredScope != null && declaredScope.length > 0
+					? resolveScopePaths(declaredScope, effectiveDirectory).paths.join(
+							', ',
+						)
+					: '';
+			const pathMatch = /[^\s]+/.exec(
+				err instanceof Error ? err.message : String(err),
+			);
+			const targetPath = (() => {
+				const p =
+					toolArgs?.filePath ??
+					toolArgs?.path ??
+					toolArgs?.file ??
+					toolArgs?.target;
+				if (typeof p === 'string' && p.length > 0) return p;
+
+				const rawMessage = err instanceof Error ? err.message : String(err);
+
+				// Extract the violating write target from known guardrail error formats
+				// before falling back to the first error-message token or placeholder.
+				const extracted =
+					/(?:write|target|file|path|scope|prefix)[^:]*:\s*(?:"([^"]+)"|'([^']+)'|(\S+))/i.exec(
+						rawMessage,
+					) ??
+					/(?:write|target|file|path)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/i.exec(
+						rawMessage,
+					);
+
+				const candidate =
+					extracted != null
+						? (extracted[1] ??
+							extracted[2] ??
+							extracted[3] ??
+							extracted[4] ??
+							extracted[5] ??
+							extracted[6])
+						: null;
+
+				if (candidate && candidate.length > 0 && candidate.length < 200) {
+					return candidate;
+				}
+
+				if (pathMatch) return pathMatch[0];
+				return '<shell write>';
+			})();
+			const agentName = (() => {
+				const rawAgent = swarmState.activeAgent.get(input.sessionID);
+				return rawAgent ? stripKnownSwarmPrefix(rawAgent) : 'unknown';
+			})();
+			void appendGuardrailDecision(
+				{
+					type: 'scope_violation',
+					ts: new Date().toISOString(),
+					sessionID: input.sessionID,
+					agent: agentName,
+					tool: input.tool,
+					path: targetPath,
+					declaredScope: declaredScopeText,
+					resolvedScope: resolvedScopeText,
+					action: 'bash',
+				},
+				{
+					auditPath: shellAuditPath,
+					enabled: shellAuditEnabled,
+				},
+			);
+			throw err;
+		}
 
 		// Issue #853 Layer B: structural spec-drift block
 		enforceSpecDriftGate(effectiveDirectory, input.tool);
@@ -1801,16 +1965,38 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 				toolArgs?.file ??
 				toolArgs?.target;
 			if (typeof targetPath === 'string' && targetPath.length > 0) {
+				const agentName =
+					swarmState.activeAgent.get(input.sessionID) ?? 'unknown';
 				// lstat: block writes through symlinks
 				const lstatBlock = checkWriteTargetForSymlink(
 					targetPath,
 					effectiveDirectory,
 				);
 				if (lstatBlock) {
+					void appendGuardrailDecision(
+						{
+							type: 'file_write',
+							ts: new Date().toISOString(),
+							sessionID: input.sessionID,
+							agent: agentName,
+							tool: input.tool,
+							path: targetPath,
+							reason: lstatBlock,
+							resolvedScope: (() => {
+								const scope = resolveDeclaredScope(input.sessionID);
+								return scope != null && scope.length > 0
+									? scope.join(', ')
+									: '';
+							})(),
+						},
+						{
+							auditPath: shellAuditPath,
+							enabled: shellAuditEnabled,
+						},
+					);
 					throw new Error(lstatBlock);
 				}
 
-				const agentName = swarmState.activeAgent.get(input.sessionID);
 				if (!agentName) {
 					throw new Error(
 						`WRITE BLOCKED: No active agent registered for session "${input.sessionID}". Call startAgentSession before issuing write tool calls.`,
@@ -1827,6 +2013,27 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 						.replace(/\\/g, '/');
 					for (const prefix of universalDenyPrefixes) {
 						if (normalizedPath.toLowerCase().startsWith(prefix.toLowerCase())) {
+							void appendGuardrailDecision(
+								{
+									type: 'file_write',
+									ts: new Date().toISOString(),
+									sessionID: input.sessionID,
+									agent: agentName,
+									tool: input.tool,
+									path: targetPath,
+									reason: `Path is under universal deny prefix "${prefix}"`,
+									resolvedScope: (() => {
+										const scope = resolveDeclaredScope(input.sessionID);
+										return scope != null && scope.length > 0
+											? scope.join(', ')
+											: '';
+									})(),
+								},
+								{
+									auditPath: shellAuditPath,
+									enabled: shellAuditEnabled,
+								},
+							);
 							throw new Error(
 								`WRITE BLOCKED: Agent "${agentName}" is not authorised to write "${targetPath}". Reason: Path is under universal deny prefix "${prefix}"`,
 							);
@@ -1845,6 +2052,27 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 					{ declaredScope: writeDeclaredScope },
 				);
 				if (!authorityCheck.allowed) {
+					void appendGuardrailDecision(
+						{
+							type: 'file_write',
+							ts: new Date().toISOString(),
+							sessionID: input.sessionID,
+							agent: agentName,
+							tool: input.tool,
+							path: targetPath,
+							reason: authorityCheck.reason,
+							resolvedScope: (() => {
+								const scope = writeDeclaredScope;
+								return scope != null && scope.length > 0
+									? scope.join(', ')
+									: '';
+							})(),
+						},
+						{
+							auditPath: shellAuditPath,
+							enabled: shellAuditEnabled,
+						},
+					);
 					throw new Error(
 						`WRITE BLOCKED: Agent "${agentName}" is not authorised to write "${targetPath}". Reason: ${authorityCheck.reason}`,
 					);
@@ -1882,8 +2110,9 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 
 		// Authority + lstat + universal-deny for apply_patch / patch
 		if (input.tool === 'apply_patch' || input.tool === 'patch') {
-			const patchAgentName = swarmState.activeAgent.get(input.sessionID);
-			if (!patchAgentName) {
+			const patchAgentName =
+				swarmState.activeAgent.get(input.sessionID) ?? 'unknown';
+			if (!swarmState.activeAgent.has(input.sessionID)) {
 				throw new Error(
 					`WRITE BLOCKED: No active agent registered for session "${input.sessionID}". Call startAgentSession before issuing write tool calls.`,
 				);
@@ -1891,6 +2120,27 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 			for (const p of extractPatchTargetPaths(input.tool, output.args)) {
 				const lstatBlock = checkWriteTargetForSymlink(p, effectiveDirectory);
 				if (lstatBlock) {
+					void appendGuardrailDecision(
+						{
+							type: 'file_write',
+							ts: new Date().toISOString(),
+							sessionID: input.sessionID,
+							agent: patchAgentName,
+							tool: input.tool,
+							path: p,
+							reason: lstatBlock,
+							resolvedScope: (() => {
+								const scope = resolveDeclaredScope(input.sessionID);
+								return scope != null && scope.length > 0
+									? scope.join(', ')
+									: '';
+							})(),
+						},
+						{
+							auditPath: shellAuditPath,
+							enabled: shellAuditEnabled,
+						},
+					);
 					throw new Error(lstatBlock);
 				}
 
@@ -1903,6 +2153,27 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 						.replace(/\\/g, '/');
 					for (const prefix of universalDenyPrefixes) {
 						if (normalizedP.toLowerCase().startsWith(prefix.toLowerCase())) {
+							void appendGuardrailDecision(
+								{
+									type: 'file_write',
+									ts: new Date().toISOString(),
+									sessionID: input.sessionID,
+									agent: patchAgentName,
+									tool: input.tool,
+									path: p,
+									reason: `Path is under universal deny prefix "${prefix}"`,
+									resolvedScope: (() => {
+										const scope = resolveDeclaredScope(input.sessionID);
+										return scope != null && scope.length > 0
+											? scope.join(', ')
+											: '';
+									})(),
+								},
+								{
+									auditPath: shellAuditPath,
+									enabled: shellAuditEnabled,
+								},
+							);
 							throw new Error(
 								`WRITE BLOCKED: Agent "${patchAgentName}" is not authorised to write "${p}" (via patch). Reason: Path is under universal deny prefix "${prefix}"`,
 							);
@@ -1920,6 +2191,27 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 					{ declaredScope: patchDeclaredScope },
 				);
 				if (!authorityCheck.allowed) {
+					void appendGuardrailDecision(
+						{
+							type: 'file_write',
+							ts: new Date().toISOString(),
+							sessionID: input.sessionID,
+							agent: patchAgentName,
+							tool: input.tool,
+							path: p,
+							reason: authorityCheck.reason,
+							resolvedScope: (() => {
+								const scope = patchDeclaredScope;
+								return scope != null && scope.length > 0
+									? scope.join(', ')
+									: '';
+							})(),
+						},
+						{
+							auditPath: shellAuditPath,
+							enabled: shellAuditEnabled,
+						},
+					);
 					throw new Error(
 						`WRITE BLOCKED: Agent "${patchAgentName}" is not authorised to write "${p}" (via patch). Reason: ${authorityCheck.reason}`,
 					);
@@ -1985,7 +2277,23 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		});
 
 		// OS-level sandbox enforcement
-		await applySandboxExecution(input.sessionID, input.tool, output.args);
+		await applySandboxExecution(
+			input.sessionID,
+			input.tool,
+			output.args,
+			(() => {
+				const rawAgent = swarmState.activeAgent.get(input.sessionID);
+				return rawAgent ? stripKnownSwarmPrefix(rawAgent) : 'unknown';
+			})(),
+			(() => {
+				const bashArgs = output.args as Record<string, unknown> | undefined;
+				const rawCmd =
+					typeof bashArgs?.command === 'string' ? bashArgs.command : '';
+				return rawCmd;
+			})(),
+			shellAuditPath,
+			shellAuditEnabled,
+		);
 
 		// v6.12: Store input args for delegation detection in toolAfter
 		setStoredInputArgs(input.callID, output.args);

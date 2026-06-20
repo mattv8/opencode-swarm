@@ -59,6 +59,8 @@ export {
 } from './evidence';
 export { handleExportCommand } from './export';
 export { handleFullAutoCommand } from './full-auto';
+export { handleGuardrailExplain } from './guardrail-explain';
+export { handleGuardrailLog } from './guardrail-log';
 export { handleHandoffCommand } from './handoff';
 export { handleHistoryCommand } from './history';
 export {
