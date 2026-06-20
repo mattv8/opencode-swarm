@@ -730,5 +730,117 @@ describe('knowledge_remove tool verification tests', () => {
 			expect(entries[0].id).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 			expect(entries[0].status).toBe('promoted');
 		});
+
+		it('Allows deletion of entries with status "archived"', async () => {
+			const { appendKnowledge } = await import(
+				'../../../src/hooks/knowledge-store.js'
+			);
+
+			const archivedEntry = {
+				id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+				tier: 'swarm' as const,
+				lesson: 'Archived entry that should be deletable',
+				category: 'process' as const,
+				tags: ['archived'],
+				scope: 'global',
+				confidence: 0.3,
+				status: 'archived' as const,
+				confirmed_by: [],
+				project_name: 'test-project',
+				retrieval_outcomes: {
+					shown_count: 0,
+					acknowledged_count: 0,
+					applied_explicit_count: 0,
+					ignored_count: 0,
+					violated_count: 0,
+					succeeded_after_shown_count: 0,
+					failed_after_shown_count: 0,
+				},
+				schema_version: 2,
+				created_at: new Date().toISOString(),
+				updated_at: new Date().toISOString(),
+				auto_generated: false,
+				hive_eligible: false,
+			};
+
+			const knowledgePath = path.join(tmpDir, '.swarm', 'knowledge.jsonl');
+			await fs.mkdir(path.dirname(knowledgePath), { recursive: true });
+			await appendKnowledge(knowledgePath, archivedEntry);
+
+			// Verify the archived entry exists
+			let entries = readKnowledgeEntries();
+			expect(entries).toHaveLength(1);
+			expect(entries[0].status).toBe('archived');
+
+			// Delete the archived entry
+			const result = await knowledge_remove.execute(
+				{ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc' },
+				tmpDir,
+			);
+
+			const parsed = JSON.parse(result);
+			expect(parsed.success).toBe(true);
+			expect(parsed.removed).toBe(1);
+
+			// Verify the entry is gone
+			entries = readKnowledgeEntries();
+			expect(entries).toHaveLength(0);
+		});
+
+		it('Allows deletion of entries with status "established"', async () => {
+			const { appendKnowledge } = await import(
+				'../../../src/hooks/knowledge-store.js'
+			);
+
+			const establishedEntry = {
+				id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+				tier: 'swarm' as const,
+				lesson: 'Established entry that should be deletable',
+				category: 'tooling' as const,
+				tags: ['established'],
+				scope: 'global',
+				confidence: 0.9,
+				status: 'established' as const,
+				confirmed_by: [],
+				project_name: 'test-project',
+				retrieval_outcomes: {
+					shown_count: 10,
+					acknowledged_count: 10,
+					applied_explicit_count: 8,
+					ignored_count: 0,
+					violated_count: 0,
+					succeeded_after_shown_count: 2,
+					failed_after_shown_count: 0,
+				},
+				schema_version: 2,
+				created_at: new Date().toISOString(),
+				updated_at: new Date().toISOString(),
+				auto_generated: false,
+				hive_eligible: true,
+			};
+
+			const knowledgePath = path.join(tmpDir, '.swarm', 'knowledge.jsonl');
+			await fs.mkdir(path.dirname(knowledgePath), { recursive: true });
+			await appendKnowledge(knowledgePath, establishedEntry);
+
+			// Verify the established entry exists
+			let entries = readKnowledgeEntries();
+			expect(entries).toHaveLength(1);
+			expect(entries[0].status).toBe('established');
+
+			// Delete the established entry
+			const result = await knowledge_remove.execute(
+				{ id: 'dddddddd-dddd-dddd-dddd-dddddddddddd' },
+				tmpDir,
+			);
+
+			const parsed = JSON.parse(result);
+			expect(parsed.success).toBe(true);
+			expect(parsed.removed).toBe(1);
+
+			// Verify the entry is gone
+			entries = readKnowledgeEntries();
+			expect(entries).toHaveLength(0);
+		});
 	});
 });

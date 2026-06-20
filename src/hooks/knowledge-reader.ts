@@ -459,7 +459,8 @@ export async function readMergedKnowledge(
 		}
 
 		// Tier boost: hive entries get a constant boost of 0.05 (HIVE_TIER_BOOST)
-		// This replaces the earlier configurable same_project_weight / cross_project_weight approach
+		// when they have a source_project; this replaces the earlier configurable
+		// same_project_weight / cross_project_weight approach
 		let tierBoost = 0;
 		let isSameProject = false;
 		if (entry.tier === 'hive' && 'source_project' in entry) {
