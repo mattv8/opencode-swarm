@@ -1741,4 +1741,31 @@ describe('common_prompt (shared lane context)', () => {
 			.calls[0][0].body.parts[0].text;
 		expect(sentText).toBe('SHARED ASYNC CONTEXT\n\ninspect runtime');
 	});
+
+	test('executeDispatchLanesAsync rejects oversized common_prompt + prompt without dispatching', async () => {
+		const directory = makeTempDir();
+		const ops: SessionOps = {
+			create: mock(async () => ({ data: { id: 'session' }, error: undefined })),
+			prompt: mock(async () => ({
+				data: { parts: [{ type: 'text' as const, text: 'unused' }] },
+				error: undefined,
+			})),
+			promptAsync: mock(async () => ({ data: undefined, error: undefined })),
+			delete: mock(async () => undefined),
+		};
+		_internals.getSessionOps = () => ops;
+
+		const result = await executeDispatchLanesAsync(
+			{
+				batch_id: 'batch-oversized-1',
+				common_prompt: 'a'.repeat(MAX_PROMPT_CHARS - 1),
+				lanes: [{ id: 'big', agent: 'explorer', prompt: 'bbbb' }],
+			},
+			directory,
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.failure_class).toBe('invalid_args');
+		expect(ops.promptAsync).toHaveBeenCalledTimes(0);
+	});
 });
