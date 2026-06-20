@@ -1248,6 +1248,10 @@ type ApplyCommonPromptResult =
  * send large shared context once instead of inlining it into each lane (which
  * bloats the tool-call payload and triggers truncated/malformed tool-call JSON).
  * Returns an error when any assembled prompt exceeds the per-lane character limit.
+ *
+ * When `commonPrompt` is falsy, the original `lanes` array is returned by reference
+ * (no allocation); callers must not mutate the returned array in place. When a
+ * `commonPrompt` is applied, a fresh array of shallow-copied lanes is returned.
  */
 function applyCommonPrompt(
 	lanes: DispatchLaneSpec[],
