@@ -1662,6 +1662,11 @@ describe('buildWorkspaceGraph — issue #1448: resilience + directory excludes',
 		if (!graph) throw new Error('graph not built');
 		expect(hasFile(graph, 'src/index.ts')).toBe(true);
 		expect(hasFile(graph, 'src/generated.min.js')).toBe(false);
+		// Only the clean file is counted. nodeCount is the public, behaviorally
+		// meaningful counterpart to the internal filesScanned stat (which is
+		// log-only and never exposed on metadata): a skipped node must not
+		// inflate the count in either build path.
+		expect(graph.metadata.nodeCount).toBe(1);
 	});
 
 	test('async build (the startup-hook path) does not abort on the same file', async () => {
@@ -1681,6 +1686,11 @@ describe('buildWorkspaceGraph — issue #1448: resilience + directory excludes',
 		if (!graph) throw new Error('graph not built');
 		expect(hasFile(graph, 'src/index.ts')).toBe(true);
 		expect(hasFile(graph, 'src/generated.min.js')).toBe(false);
+		// Same accuracy guarantee for the async path: the skipped node must not
+		// inflate nodeCount. (Asserts the async counting is correct without the
+		// erroneous filesScanned-- the bot review suggested, which would have
+		// corrupted the log-only stat downward.)
+		expect(graph.metadata.nodeCount).toBe(1);
 	});
 
 	test('.svelte-kit build output is excluded by default (sync and async)', async () => {

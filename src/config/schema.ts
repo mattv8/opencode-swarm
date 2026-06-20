@@ -946,8 +946,13 @@ export const RepoGraphConfigSchema = z.object({
 	 * Matching is by directory basename at any depth — the same mechanism the
 	 * built-in defaults use — so `".svelte-kit"` excludes every `.svelte-kit`
 	 * directory in the workspace. Entries are not glob/path patterns.
+	 *
+	 * Matching is case-sensitive: specify each name exactly as it appears on
+	 * disk (the built-in defaults are lowercase). Surrounding whitespace is
+	 * trimmed, and whitespace-only entries are rejected at config load rather
+	 * than silently ignored.
 	 */
-	exclude_dirs: z.array(z.string().min(1)).default([]),
+	exclude_dirs: z.array(z.string().trim().min(1)).default([]),
 });
 
 export type RepoGraphConfig = z.infer<typeof RepoGraphConfigSchema>;

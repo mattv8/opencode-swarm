@@ -45,6 +45,10 @@ No breaking changes. All changes are additive and backward-compatible:
 ## Caveats
 
 - `exclude_dirs` entries are directory names, not glob or path patterns.
+  Matching is case-sensitive; specify each name exactly as it appears on disk.
+  Surrounding whitespace is trimmed, and whitespace-only entries are rejected at
+  config load (rather than silently ignored) so a typo surfaces as a clear
+  validation error.
 - A file that is skipped during the build is reflected only in the aggregate
   `[repo-graph] Scan stats` log line, not a per-file message.
 - The incremental write-update path honors user `exclude_dirs`; built-in defaults
