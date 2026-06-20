@@ -5,6 +5,9 @@
 # NOTE: Requires GNU grep (uses -oP for Perl regex patterns).
 set -euo pipefail
 
+# Load shared normalization routine
+source "$(dirname "$0")/lib/normalize-mock-target.sh"
+
 violations=0
 
 echo "=== Check 1: Subprocess timeout required (advisory) ==="
@@ -36,6 +39,9 @@ echo "=== Check 2: process.cwd() ban in tools/hooks ==="
 # Grep for process.cwd() in src/tools/ and src/hooks/ (excluding test files).
 # Exempt known legacy usages — these predate the ctx.directory convention and
 # are wrapped in explicit fallback patterns (cwd ?? process.cwd()).
+# LEGACY_EXEMPTS — full file paths matched by exact equality (not substring).
+# Adding a substring-style entry (e.g., "guardrails" to match
+# "src/hooks/guardrails.ts") will silently fail to exempt.
 LEGACY_EXEMPTS=(
   "src/tools/create-tool.ts"
   "src/tools/test-runner.ts"
@@ -75,6 +81,13 @@ if [ ! -f "$ALLOWLIST_FILE" ]; then
   echo "       Run: scripts/generate-mock-allowlist.sh to regenerate, or manually add targets to $ALLOWLIST_FILE"
   violations=$((violations + 1))
 else
+  # Pre-load allowlist into associative array once so lookup is O(1) instead of O(N·M)
+  declare -A allowlist
+  while IFS= read -r pattern; do
+    [[ -z "$pattern" || "$pattern" == \#* ]] && continue
+    allowlist["$pattern"]=1
+  done < "$ALLOWLIST_FILE"
+
   while IFS= read -r file; do
     # Filter: only non-comment lines containing mock.module(
     # This avoids false positives from commented-out code.
@@ -94,36 +107,19 @@ else
       # Skip empty lines
       [ -n "$target" ] || continue
 
-      # Normalize: strip all ../ and ./ segments, then leading src/, then .js extension
+      # Normalize: strip leading ../ and ./ segments, then leading src/, then .js extension
       # ../../../src/plan/manager.js -> src/plan/manager
       # ../../src/tools/co-change-analyzer.js -> src/tools/co-change-analyzer
       # ../../../src/tools/../tools/bar.js -> src/tools/bar (handles middle ..)
       # ./ledger -> ledger (handles relative imports in same dir)
       # node:child_process -> node:child_process (unchanged)
-      normalized="$target"
-      # First, strip leading ../ and ./ sequences (using * for basic sed compatibility)
-      normalized="$(echo "$normalized" | sed 's|^\(\.\./\)*||; s|^\(./\)*||')"
-      # Then, repeatedly remove dir/.. patterns until no more exist (handles middle .. segments)
-      while [[ "$normalized" == *"/../"* ]]; do
-        normalized="$(echo "$normalized" | sed 's|[^/]\+/\.\.||')"
-      done
-      # Strip leading src/ and trailing .js
-      normalized="$(echo "$normalized" | sed 's|^src/||; s|\.js$||')"
-      # Prepend src/ only for relative targets (not node: builtins)
-      if [[ "$normalized" != node:* ]]; then
-        normalized="src/$normalized"
-      fi
+      normalized="$(normalize_mock_target "$target")"
 
-      # Check against allowlist (exact match on normalized target)
+      # O(1) lookup in pre-loaded associative array
       allowed=false
-      while IFS= read -r pattern; do
-        # Skip empty lines and comments in allowlist
-        [[ -z "$pattern" || "$pattern" == \#* ]] && continue
-        if [ "$normalized" = "$pattern" ]; then
-          allowed=true
-          break
-        fi
-      done < "$ALLOWLIST_FILE"
+      if [[ ${allowlist["$normalized"]:-} == 1 ]]; then
+        allowed=true
+      fi
 
       if ! $allowed; then
         echo "ERROR: $file mocks '$target' (normalized: '$normalized') — not in allowlist."

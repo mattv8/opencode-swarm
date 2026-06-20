@@ -13,6 +13,9 @@ ALLOWLIST_FILE="$SCRIPT_DIR/mock-allowlist.txt"
 TEMP_ALLOWLIST="$(mktemp)"
 trap "rm -f '$TEMP_ALLOWLIST'" EXIT
 
+# Load shared normalization routine
+source "$SCRIPT_DIR/lib/normalize-mock-target.sh"
+
 CHECK_MODE=false
 if [[ "${1:-}" == "--check" ]]; then
   CHECK_MODE=true
@@ -20,36 +23,21 @@ fi
 
 echo "Scanning test files for mock.module calls..." >&2
 
-# Extract and normalize all mock.module targets in one pass
-# Using pure sed to handle normalization without expensive loops
+# Extract and normalize all mock.module targets in one pass via the shared library.
+# Normalization runs inside a single spawned bash process (reading stdin) to
+# avoid fork-per-line overhead while keeping both scripts behaviorally identical.
 grep -rh "mock\.module(" tests/ src/ \
   --include="*.test.ts" \
   --exclude-dir=node_modules \
   --exclude-dir=dist 2>/dev/null | \
   grep -vE '^\s*//' | grep -vE '^\s*\*' | \
   sed "s/.*mock\.module(\s*[\"']\([^\"']*\)[\"'].*/\1/" | \
-  sed '
-    # Normalize paths:
-    # 1. Strip leading ../ sequences
-    s|^\(\.\./\)*||
-    # 2. Strip leading ./ sequences  
-    s|^\(./\)*||
-    # 3. Remove one level of ../parent/ -> assuming max 2 levels of .. nesting
-    s|[^/]\+/\.\.||
-    # 4. Strip leading src/
-    s|^src/||
-    # 5. Strip trailing .js
-    s|\.js$||
-  ' | {
-    # Prepend src/ for relative paths only (not node: builtins)
+  bash -c '
+    source "$1/lib/normalize-mock-target.sh"
     while IFS= read -r target; do
-      if [[ "$target" == node:* ]]; then
-        echo "$target"
-      else
-        echo "src/$target"
-      fi
+      normalize_mock_target "$target"
     done
-  } | sort -u > "$TEMP_ALLOWLIST"
+  ' _ "$SCRIPT_DIR" | sort -u > "$TEMP_ALLOWLIST"
 
 if [ "$CHECK_MODE" = true ]; then
   # In check mode, compare the generated allowlist with the current one
@@ -76,7 +64,7 @@ else
     echo "# To add a NEW mock target: append it here with a comment explaining why."
     echo "# Prefer _internals DI seam for new code — mock.module is a legacy pattern."
     echo "#"
-    echo "# Last updated: $(date -u +'%Y-%m-%d')"
+    echo "# Last updated: $(date -u +'%Y-%m-%d') (normalization in scripts/lib/normalize-mock-target.sh)"
     echo ""
     
     # Node builtins section
