@@ -195,6 +195,30 @@ describe('appendGuardrailDecision', () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
+	test('F-003: file_write reason is redacted before persistence', async () => {
+		const dir = await mkTempDir();
+		const auditPath = join(dir, 'audit.jsonl');
+
+		const entry = {
+			type: 'file_write' as const,
+			ts: '2026-01-01T00:00:00.000Z',
+			sessionID: 'sess-fw-redact',
+			agent: 'coder',
+			tool: 'write',
+			path: '/home/alice/project/link',
+			reason: 'WRITE BLOCKED: symlink detected at /home/alice/project/link',
+			resolvedScope: '/home/alice/project',
+		};
+
+		await appendGuardrailDecision(entry, { auditPath, enabled: true });
+
+		const parsed = jsonLine(appendCalls[0]!.content.trim());
+		expect(parsed.reason).not.toContain('/home/alice');
+		expect(parsed.reason).toContain('~/project/link');
+
+		await rm(dir, { recursive: true, force: true });
+	});
+
 	// ---- Additive schema: destructive_block entry ----
 	test('destructive_block entry includes type discriminator and per-type fields', async () => {
 		const dir = await mkTempDir();
@@ -362,6 +386,76 @@ describe('appendGuardrailDecision', () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
+	describe('F-008: per-type validation rejection paths', () => {
+		const base = {
+			ts: '2026-01-01T00:00:00.000Z',
+			sessionID: 'sess-reject',
+			agent: 'coder',
+			tool: 'bash',
+		};
+
+		const cases = [
+			{
+				name: 'file_write missing reason',
+				entry: {
+					...base,
+					type: 'file_write' as const,
+					path: 'src/index.ts',
+					resolvedScope: 'src',
+				},
+			},
+			{
+				name: 'scope_violation missing action',
+				entry: {
+					...base,
+					type: 'scope_violation' as const,
+					path: '../outside.txt',
+					declaredScope: 'src',
+					resolvedScope: '..',
+				},
+			},
+			{
+				name: 'destructive_block missing destructiveCategory',
+				entry: {
+					...base,
+					type: 'destructive_block' as const,
+					command: 'rm -rf /',
+				},
+			},
+			{
+				name: 'sandbox_wrap missing command',
+				entry: {
+					...base,
+					type: 'sandbox_wrap' as const,
+					mechanism: 'bubblewrap',
+				},
+			},
+			{
+				name: 'sandbox_skip missing reason',
+				entry: {
+					...base,
+					type: 'sandbox_skip' as const,
+					command: 'echo hi',
+				},
+			},
+		];
+
+		for (const testCase of cases) {
+			test(`${testCase.name} is rejected`, async () => {
+				const dir = await mkTempDir();
+				const auditPath = join(dir, 'audit.jsonl');
+
+				await appendGuardrailDecision(testCase.entry as any, {
+					auditPath,
+					enabled: true,
+				});
+
+				expect(appendCalls.length).toBe(0);
+				await rm(dir, { recursive: true, force: true });
+			});
+		}
+	});
+
 	// ---- enabled=false → nothing written ----
 	test('enabled=false skips writing entirely', async () => {
 		const dir = await mkTempDir();
@@ -478,6 +572,13 @@ describe('redactPath', () => {
 		// Should start with ~/
 		expect(result.startsWith('~/')).toBe(true);
 		expect(result).not.toContain('bob');
+	});
+
+	test('F-004: UNC path is redacted without leaking server segment', () => {
+		const result = redactPath('\\\\server\\share\\alice\\project\\file.txt');
+
+		expect(result).toBe('~\\share\\alice\\project\\file.txt');
+		expect(result).not.toContain('server');
 	});
 
 	test('non-home path is unchanged', () => {

@@ -212,6 +212,45 @@ describe('SC-105: --agent and --scope overrides reflected in resolved scope/deci
 	});
 });
 
+describe('guardrail explain parity regressions from PR feedback', () => {
+	test('F-001: malformed write syntax fails closed on parseError', async () => {
+		// Previous behavior silently ignored detectPosixWrites parseError and
+		// predicted allow, while the real hook blocks parse failures.
+		const result = await handleGuardrailExplain(tempDir, ['touch ")(']);
+
+		expect(result).toMatch(/\|\s*Decision\s*\|\s*block\s*\|/i);
+		expect(result).toContain('parse_error');
+		expect(result).toContain('rejecting for safety');
+	});
+
+	test('F-002: PowerShell env syntax routes through Windows write detection', async () => {
+		// Previous resolveShellType missed `$env:` heuristics and treated this as
+		// POSIX, diverging from the real hook's detectShellType routing.
+		const result = await handleGuardrailExplain(tempDir, [
+			'--scope',
+			'src/',
+			'$env:PATH > ../outside-scope.txt',
+		]);
+
+		expect(result).toMatch(/\|\s*Decision\s*\|\s*block\s*\|/i);
+		expect(result).toMatch(/scope_violation/i);
+		expect(result).toMatch(/file_redirect|file_write|write/i);
+	});
+
+	test('F-002: PowerShell cmdlet prefix routes through Windows write detection', async () => {
+		// Previous resolveShellType missed Copy-Item and could parse with the
+		// wrong engine, causing explain to diverge from real enforcement.
+		const result = await handleGuardrailExplain(tempDir, [
+			'--scope',
+			'src/',
+			'Copy-Item src/index.ts ../outside-scope.txt',
+		]);
+
+		expect(result).toMatch(/\|\s*Decision\s*\|\s*block\s*\|/i);
+		expect(result).toMatch(/scope_violation/i);
+	});
+});
+
 describe('SC-116: explain handler executes NOTHING', () => {
 	test('calling explain with rm -rf / does not modify filesystem', async () => {
 		// Create a marker file to prove the function didn't execute

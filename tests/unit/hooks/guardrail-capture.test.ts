@@ -100,20 +100,65 @@ function countEntriesByType(
 	return entries.filter((e) => e.type === type).length;
 }
 
-/**
- * Wait for async audit writes to flush to disk.
- * appendGuardrailDecision is fire-and-forget (void return), so we need an
- * explicit event-loop yield to ensure the Bun process flushes its write
- * buffer before we read the file.
- */
-async function flushAuditWrites(): Promise<void> {
-	// Use multiple sleep cycles to give the Bun event loop ample opportunity
-	// to flush pending async I/O before we read the file.
-	// The void-async appendGuardrailDecision calls in toolBefore need several
-	// event-loop ticks to complete their fs.appendFile before we assert.
-	for (let i = 0; i < 8; i++) {
-		await Bun.sleep(50);
+async function waitForAuditEntries(
+	auditPath: string,
+	expectedCount = 1,
+	timeoutMs = 3000,
+): Promise<void> {
+	const start = Date.now();
+	let delayMs = 10;
+	while (Date.now() - start < timeoutMs) {
+		if (fsSync.existsSync(auditPath)) {
+			const entries = readAuditLog(auditPath);
+			if (entries.length >= expectedCount) return;
+		}
+		await Bun.sleep(delayMs);
+		delayMs = Math.min(delayMs * 2, 100);
 	}
+	const entries = readAuditLog(auditPath);
+	throw new Error(
+		`Timed out waiting for ${expectedCount} audit entries; saw ${entries.length}`,
+	);
+}
+
+async function waitForAuditEntryType(
+	auditPath: string,
+	type: string,
+	expectedCount = 1,
+	timeoutMs = 3000,
+): Promise<void> {
+	const start = Date.now();
+	let delayMs = 10;
+	while (Date.now() - start < timeoutMs) {
+		if (fsSync.existsSync(auditPath)) {
+			const entries = readAuditLog(auditPath);
+			if (countEntriesByType(entries, type) >= expectedCount) return;
+		}
+		await Bun.sleep(delayMs);
+		delayMs = Math.min(delayMs * 2, 100);
+	}
+	const entries = readAuditLog(auditPath);
+	throw new Error(
+		`Timed out waiting for ${expectedCount} ${type} audit entries; saw ${countEntriesByType(entries, type)}`,
+	);
+}
+
+async function waitForAuditEntry(
+	auditPath: string,
+	predicate: (entry: Record<string, unknown>) => boolean,
+	timeoutMs = 3000,
+): Promise<void> {
+	const start = Date.now();
+	let delayMs = 10;
+	while (Date.now() - start < timeoutMs) {
+		if (fsSync.existsSync(auditPath)) {
+			const entries = readAuditLog(auditPath);
+			if (entries.some(predicate)) return;
+		}
+		await Bun.sleep(delayMs);
+		delayMs = Math.min(delayMs * 2, 100);
+	}
+	throw new Error('Timed out waiting for matching audit entry');
 }
 
 // ---------------------------------------------------------------------------
@@ -135,8 +180,10 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 	});
 
 	afterEach(async () => {
-		// Allow any pending async writes from this test to complete before cleanup
-		await flushAuditWrites();
+		// Best-effort cleanup guard if a test failed before its own wait.
+		if (fsSync.existsSync(auditPath)) {
+			await waitForAuditEntries(auditPath, 1, 200).catch(() => {});
+		}
 		resetSwarmState();
 		try {
 			fsSync.rmSync(tempDir, { recursive: true, force: true });
@@ -146,7 +193,7 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// destructive_block — git reset --hard
+	// destructive_block — fork bomb
 	// -------------------------------------------------------------------------
 	describe('destructive_block', () => {
 		it('throws the block error AND appends a destructive_block JSONL entry', async () => {
@@ -155,14 +202,15 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 			startAgentSession('s-dest', 'coder');
 			swarmState.activeAgent.set('s-dest', 'coder');
 
-			// git reset --hard is a blocked destructive command
+			// Fork bomb is a blocked destructive command that does not overlap
+			// shell write-scope analysis.
 			await expect(
 				hooks.toolBefore(makeInput('s-dest', 'bash', 'call-dest'), {
-					args: { command: 'git reset --hard' },
+					args: { command: ':(){ :|:& };:' },
 				}),
-			).rejects.toThrow(/BLOCKED.*git reset/i);
+			).rejects.toThrow(/BLOCKED/i);
 
-			await flushAuditWrites();
+			await waitForAuditEntryType(auditPath, 'destructive_block');
 
 			// Verify audit entry was appended
 			const entries = readAuditLog(auditPath);
@@ -177,7 +225,7 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 			expect(entry!.sessionID).toBe('s-dest');
 			expect(entry!.agent).toBe('coder');
 			expect(entry!.tool).toBe('bash');
-			expect(entry!.command).toContain('git reset --hard');
+			expect(entry!.command).toContain(':(){ :|:& };:');
 			expect(typeof entry!.destructiveCategory).toBe('string');
 		});
 
@@ -190,18 +238,18 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 			// First destructive command — should throw
 			await expect(
 				hooks.toolBefore(makeInput('s-dest2', 'bash', 'call-dest2a'), {
-					args: { command: 'git reset --hard' },
+					args: { command: ':(){ :|:& };:' },
 				}),
 			).rejects.toThrow(/BLOCKED/i);
 
 			// Second destructive command — should ALSO throw (not swallowed)
 			await expect(
 				hooks.toolBefore(makeInput('s-dest2', 'bash', 'call-dest2b'), {
-					args: { command: 'git clean -fd' },
+					args: { command: ': () { :|:& };:' },
 				}),
 			).rejects.toThrow(/BLOCKED/i);
 
-			await flushAuditWrites();
+			await waitForAuditEntryType(auditPath, 'destructive_block', 2);
 
 			// Both should appear as separate audit entries
 			const entries = readAuditLog(auditPath);
@@ -248,7 +296,7 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 				}),
 			).rejects.toThrow();
 
-			await flushAuditWrites();
+			await waitForAuditEntryType(auditPath, 'scope_violation');
 
 			const entries = readAuditLog(auditPath);
 
@@ -290,7 +338,7 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 				}),
 			).rejects.toThrow(/WRITE BLOCKED|not authorised|blocked/i);
 
-			await flushAuditWrites();
+			await waitForAuditEntryType(auditPath, 'file_write');
 
 			const entries = readAuditLog(auditPath);
 			expect(countEntriesByType(entries, 'file_write')).toBeGreaterThanOrEqual(
@@ -328,7 +376,14 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 				args: { command: 'echo hello' },
 			});
 
-			await flushAuditWrites();
+			await waitForAuditEntry(
+				auditPath,
+				(e) =>
+					e.sessionID === 's-shell' &&
+					e.agent === 'coder' &&
+					e.tool === 'bash' &&
+					!e.type,
+			);
 
 			const entries = readAuditLog(auditPath);
 			// shell entries have no `type` field (legacy 5-field shape)
@@ -356,11 +411,19 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 			// A destructive command — throws, but shell entry fires first in handler
 			await expect(
 				hooks.toolBefore(makeInput('s-dup', 'bash', 'call-dup'), {
-					args: { command: 'git reset --hard' },
+					args: { command: ':(){ :|:& };:' },
 				}),
 			).rejects.toThrow(/BLOCKED/i);
 
-			await flushAuditWrites();
+			await waitForAuditEntry(
+				auditPath,
+				(e) =>
+					e.sessionID === 's-dup' &&
+					e.agent === 'coder' &&
+					e.tool === 'bash' &&
+					!e.type,
+			);
+			await waitForAuditEntryType(auditPath, 'destructive_block');
 
 			const entries = readAuditLog(auditPath);
 
@@ -465,9 +528,7 @@ describe('guardrail decision-log capture (task 2.1)', () => {
 				{ auditPath, enabled: true },
 			);
 
-			// Wait for the async write to flush
-			await Bun.sleep(50);
-			await Bun.sleep(50);
+			await waitForAuditEntryType(auditPath, 'file_write');
 
 			const entries = readAuditLog(auditPath);
 			expect(countEntriesByType(entries, 'file_write')).toBeGreaterThanOrEqual(

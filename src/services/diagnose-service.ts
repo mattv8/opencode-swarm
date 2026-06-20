@@ -18,6 +18,12 @@ import { compareVersions, readVersionCache } from './version-check.js';
 import { getDeferredWarnings } from './warning-buffer.js';
 
 const { version } = packageJson;
+const sandboxCapabilityProbe = new SandboxCapabilityProbe();
+
+export const _internals = {
+	detectSandboxCapability: () => sandboxCapabilityProbe.detect(),
+	getSandboxExecutor: getExecutor,
+};
 
 /**
  * A single health check result.
@@ -809,10 +815,10 @@ async function checkCurator(directory: string): Promise<HealthCheck> {
  */
 async function getSandboxStatus(): Promise<HealthCheck> {
 	try {
-		const capability = await new SandboxCapabilityProbe().detect();
+		const capability = await _internals.detectSandboxCapability();
 		const mechanism = capability.mechanism ?? 'none';
 
-		const executor = await getExecutor();
+		const executor = await _internals.getSandboxExecutor();
 		const hasExecutor = executor !== null;
 
 		if (hasExecutor) {

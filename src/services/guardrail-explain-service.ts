@@ -120,17 +120,27 @@ function parseGuardrailExplainArgs(args: string[]): ParsedArgs {
  * Mirrors the logic in tool-before.ts.
  */
 function resolveShellType(command: string): 'posix' | 'powershell' | 'cmd' {
-	const trimmed = command.trim().toLowerCase();
 	if (
-		trimmed.startsWith('powershell') ||
-		trimmed.startsWith('pwsh') ||
-		/^(?:remove-item|ri|rm\b|rmdir|del\b|erase|rd)\b/i.test(trimmed)
+		/^(powershell|ps1|\.\s*\\|Remove-Item|Copy-Item|Move-Item|Start-Process|New-Object|Get-ChildItem|Set-Content|Add-Content|Out-File|Invoke-WebRequest|Invoke-RestMethod|IEX|iex)\b/i.test(
+			command,
+		) ||
+		command.includes('$PSVersionTable') ||
+		command.includes('$env:') ||
+		/-EncodedCommand|-ExecutionPolicy|Enable-PSRemoting/i.test(command)
 	) {
 		return 'powershell';
 	}
-	if (trimmed.startsWith('cmd') || trimmed.startsWith('cmd.exe')) {
+	if (
+		/^(cmd|cmd\.exe|c:\/|set \w+=|\.\d+|del \/|rd \/|mkdir|chdir|echo |copy |move |ren |fc |diskpart)/i.test(
+			command,
+		) ||
+		/%[^%\s]+%/.test(command) ||
+		/\b(set|echo|if|exist)\s+/i.test(command)
+	) {
 		return 'cmd';
 	}
+	// The real hook distinguishes bash/unix internally, but both route through
+	// POSIX write detection. Keep explain's public type collapsed to posix.
 	return 'posix';
 }
 
@@ -777,10 +787,8 @@ export async function handleGuardrailExplain(
 			results.push({
 				path: rawPath,
 				decision: allowed ? 'allow' : 'block',
-				firingRule: allowed
-					? 'allow: no rule matched'
-					: redactPath(decision.reason),
-				resolvedScope: redactPath(resolvedScope),
+				firingRule: allowed ? 'allow: no rule matched' : decision.reason,
+				resolvedScope,
 				zone,
 			});
 		}
@@ -844,7 +852,11 @@ export async function handleGuardrailExplain(
 				? detectWindowsWrites(shellCommand, shellType)
 				: detectPosixWrites(shellCommand);
 
-		if (!analysis.parseError && analysis.hasWrites) {
+		if (analysis.parseError) {
+			decision = 'block';
+			firingRule =
+				'parse_error: write detection failed to parse command — rejecting for safety';
+		} else if (analysis.hasWrites) {
 			const resolvedWrites = resolveWriteTargets(
 				shellCommand,
 				analysis.writes,

@@ -13,7 +13,10 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getDiagnoseData } from '../../../src/services/diagnose-service';
+import {
+	_internals,
+	getDiagnoseData,
+} from '../../../src/services/diagnose-service';
 
 // ---------------------------------------------------------------------------
 // Mock the sandbox modules before importing diagnose-service
@@ -57,35 +60,8 @@ const mockGetExecutor = mock(async (): Promise<MockExecutor> => {
 	return mockExecutor;
 });
 
-// Mock sandbox/capability-probe
-mock.module('../../../src/sandbox/capability-probe.js', () => ({
-	SandboxCapabilityProbe: class {
-		async detect() {
-			return mockDetect();
-		}
-	},
-	isBubblewrapAvailable: () =>
-		mockCapability.status === 'enabled' && mockCapability.platform === 'linux',
-	isSandboxExecAvailable: () =>
-		mockCapability.status === 'enabled' && mockCapability.platform === 'darwin',
-	isWindowsSandboxAvailable: () =>
-		mockCapability.status === 'enabled' && mockCapability.platform === 'win32',
-}));
-
-// Mock sandbox/executor
-mock.module('../../../src/sandbox/executor.js', () => ({
-	getExecutor: mockGetExecutor,
-	_resetExecutorCache: () => {},
-	SandboxError: class SandboxError extends Error {
-		constructor(
-			message: string,
-			public readonly code: string,
-		) {
-			super(message);
-			this.name = 'SandboxError';
-		}
-	},
-}));
+const realDetectSandboxCapability = _internals.detectSandboxCapability;
+const realGetSandboxExecutor = _internals.getSandboxExecutor;
 
 // ---------------------------------------------------------------------------
 // Also mock the other modules that diagnose-service imports
@@ -130,7 +106,16 @@ mock.module('node:child_process', () => ({
 	execSync: () => Buffer.from('.git'),
 }));
 
+beforeEach(() => {
+	_internals.detectSandboxCapability =
+		mockDetect as typeof _internals.detectSandboxCapability;
+	_internals.getSandboxExecutor =
+		mockGetExecutor as typeof _internals.getSandboxExecutor;
+});
+
 afterEach(() => {
+	_internals.detectSandboxCapability = realDetectSandboxCapability;
+	_internals.getSandboxExecutor = realGetSandboxExecutor;
 	mock.restore();
 	probeThrows = false;
 	executorThrows = false;

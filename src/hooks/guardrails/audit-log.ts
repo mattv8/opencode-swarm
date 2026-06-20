@@ -264,6 +264,18 @@ function validateEntry(entry: unknown): entry is GuardrailDecisionEntry {
 export function redactPath(filePath: string): string {
 	if (typeof filePath !== 'string' || filePath.length === 0) return filePath;
 
+	// POSIX home: /home/<name>/... -> ~/...
+	const rawPosixHomeMatch = filePath.match(/^(\/home\/[^/]+)(\/.*)$/);
+	if (rawPosixHomeMatch) {
+		return `~${rawPosixHomeMatch[2]}`;
+	}
+
+	// macOS home: /Users/<name>/... -> ~/... (parity with redactShellCommand)
+	const rawMacHomeMatch = filePath.match(/^(\/Users\/[^/]+)(\/.*)$/);
+	if (rawMacHomeMatch) {
+		return `~${rawMacHomeMatch[2]}`;
+	}
+
 	const normalized = path.normalize(filePath);
 
 	// Windows user profile: C:\Users\<name>\... -> ~\<name>\...
@@ -274,19 +286,27 @@ export function redactPath(filePath: string): string {
 		return `~\\${windowsHomeMatch[2]}`;
 	}
 
-	// POSIX home: /home/<name>/... -> ~/<name>/...
-	const posixHomeMatch = normalized.match(/^(\/home\/[^/]+)(\/.*)$/);
-	if (posixHomeMatch) {
-		return `~${posixHomeMatch[2]}`;
-	}
-
-	// macOS home: /Users/<name>/... -> ~/<name>/... (parity with redactShellCommand)
-	const macHomeMatch = normalized.match(/^(\/Users\/[^/]+)(\/.*)$/);
-	if (macHomeMatch) {
-		return `~${macHomeMatch[2]}`;
+	// Windows UNC profile/share path: \\server\share\user\... -> ~\share\user\...
+	const uncHomeMatch = normalized.match(
+		/^\\\\[^\\]+\\([^\\]+)\\([^\\]+)(\\.*)$/,
+	);
+	if (uncHomeMatch) {
+		return `~\\${uncHomeMatch[1]}\\${uncHomeMatch[2]}${uncHomeMatch[3]}`;
 	}
 
 	return normalized;
+}
+
+function redactEmbeddedPaths(text: string): string {
+	return text
+		.replace(/\/home\/[^/\s]+(\/[^\s"'`)]*)?/g, (match) => redactPath(match))
+		.replace(/\/Users\/[^/\s]+(\/[^\s"'`)]*)?/g, (match) => redactPath(match))
+		.replace(/[A-Za-z]:\\Users\\[^\\\s]+(\\[^\s"'`)]*)?/g, (match) =>
+			redactPath(match),
+		)
+		.replace(/\\\\[^\\\s]+\\[^\\\s]+\\[^\\\s]+(\\[^\s"'`)]*)?/g, (match) =>
+			redactPath(match),
+		);
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +362,7 @@ export async function appendGuardrailDecision(
 			line = `${JSON.stringify({
 				...entry,
 				path: redactPath(entry.path),
+				reason: redactEmbeddedPaths(entry.reason),
 				resolvedScope: redactPath(entry.resolvedScope),
 			})}\n`;
 			break;

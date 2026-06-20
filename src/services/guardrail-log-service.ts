@@ -20,7 +20,7 @@ const BLOCK_TYPES = new Set<string>([
 ]);
 
 function isBlockEntry(entry: GuardrailLogEntry): boolean {
-	if (entry.type == null) return false;
+	if (entry.type === null || entry.type === undefined) return false;
 	return BLOCK_TYPES.has(entry.type);
 }
 
@@ -35,7 +35,8 @@ function redactSummary(entry: GuardrailLogEntry): string {
 		entry.type === 'sandbox_wrap' ||
 		entry.type === 'sandbox_skip' ||
 		entry.type === 'shell' ||
-		entry.type == null
+		entry.type === null ||
+		entry.type === undefined
 	) {
 		const raw = entry.command ?? '';
 		return redactShellCommand(raw);

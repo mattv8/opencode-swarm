@@ -1769,7 +1769,7 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		// Shell audit log
 		const normalizedAuditTool = normalizeToolName(input.tool).toLowerCase();
 		if (normalizedAuditTool === 'bash' || normalizedAuditTool === 'shell') {
-			await appendGuardrailDecision(
+			void appendGuardrailDecision(
 				{
 					type: 'shell',
 					ts: new Date().toISOString(),

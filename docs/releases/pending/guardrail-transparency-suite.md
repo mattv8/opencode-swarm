@@ -120,3 +120,13 @@ No breaking changes. All changes are additive:
 - `/swarm diagnose` — gains a new Sandbox line; existing output unchanged
 - `/swarm guardrail-log` — new command, reads existing log file
 - The JSONL schema is additive only — existing log readers are unaffected
+
+## Known limitations
+
+- `guardrail explain` still mirrors the destructive-command pattern table locally
+  because the real guardrail evaluator is nested in the hot-path hook. The shared
+  `dc*` helpers are reused and parity regressions are covered by tests; future
+  cleanup can extract a shared top-level evaluator.
+- Audit-log path redaction is best-effort. It redacts standard POSIX/macOS home
+  paths, Windows profile paths, and UNC server prefixes, but domain-specific
+  secrets embedded in arbitrary path segments remain caller responsibility.
