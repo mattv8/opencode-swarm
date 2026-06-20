@@ -10,6 +10,8 @@ import { getDurableGateEvidenceStatusForTask } from '../evidence/gate-bridge.js'
 import { listEvidenceTaskIds } from '../evidence/manager';
 import { readSwarmFileAsync } from '../hooks/utils';
 import { loadPlanJsonOnly } from '../plan/manager';
+import { SandboxCapabilityProbe } from '../sandbox/capability-probe.js';
+import { getExecutor } from '../sandbox/executor.js';
 import { readEffectiveSpecSync } from '../sdd/effective-spec';
 import { checkKnowledgeHealth } from './knowledge-diagnostics.js';
 import { compareVersions, readVersionCache } from './version-check.js';
@@ -799,6 +801,52 @@ async function checkCurator(directory: string): Promise<HealthCheck> {
 }
 
 /**
+ * Get sandbox health-check entry.
+ *
+ * Consumes the cached sandbox capability probe and, if available,
+ * the cached sandbox executor. Never re-probes and never crashes
+ * diagnose on sandbox errors.
+ */
+async function getSandboxStatus(): Promise<HealthCheck> {
+	try {
+		const capability = await new SandboxCapabilityProbe().detect();
+		const mechanism = capability.mechanism ?? 'none';
+
+		const executor = await getExecutor();
+		const hasExecutor = executor !== null;
+
+		if (hasExecutor) {
+			return {
+				name: 'Sandbox',
+				status: '✅',
+				detail: `Mechanism: ${mechanism.toLowerCase()} | Available: yes | Sandboxing commands: yes`,
+			};
+		}
+
+		if (mechanism !== 'none') {
+			return {
+				name: 'Sandbox',
+				status: '⚠️',
+				detail: `Mechanism: ${mechanism.toLowerCase()} | Available: no (silent pass-through) | Commands NOT sandboxed`,
+			};
+		}
+
+		return {
+			name: 'Sandbox',
+			status: '⬜',
+			detail: `Mechanism: ${mechanism.toLowerCase()} | Commands not sandboxed`,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Unknown error';
+		return {
+			name: 'Sandbox',
+			status: '⬜',
+			detail: `Sandbox status unknown (${message})`,
+		};
+	}
+}
+
+/**
  * Get diagnose data from the swarm directory.
  * Returns structured health checks for GUI, background flows, or commands.
  */
@@ -953,6 +1001,9 @@ export async function getDiagnoseData(
 
 	// Check: Git Repository
 	checks.push(await checkGitRepository(directory));
+
+	// Check: Sandbox
+	checks.push(await getSandboxStatus());
 
 	// Check: Spec Staleness
 	checks.push(await checkSpecStaleness(directory, plan));

@@ -9,7 +9,7 @@
 # To add a NEW mock target: append it here with a comment explaining why.
 # Prefer _internals DI seam for new code — mock.module is a legacy pattern.
 #
-# Last updated: 2026-06-17
+# Last updated: 2026-06-20
 
 # --- Node builtins ---
 node:child_process
@@ -25,6 +25,7 @@ src/build/discovery
 src/config
 src/config/index
 src/config/index.ts
+src/config/loader
 src/config/schema
 src/config/schema.ts
 src/db/qa-gate-profile
@@ -57,7 +58,10 @@ src/plan/checkpoint
 src/plan/ledger
 src/plan/manager
 src/proper-lockfile
+src/sandbox/capability-probe
+src/sandbox/executor
 src/sandbox/linux/bubblewrap-executor
+src/sdd/effective-spec
 src/sast/rules/index
 src/sast/semgrep
 src/services/evidence-summary-service

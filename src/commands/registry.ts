@@ -28,6 +28,8 @@ import {
 } from './evidence.js';
 import { handleExportCommand } from './export.js';
 import { handleFullAutoCommand } from './full-auto.js';
+import { handleGuardrailExplain } from './guardrail-explain.js';
+import { handleGuardrailLog } from './guardrail-log.js';
 import { handleHandoffCommand } from './handoff.js';
 import { handleHistoryCommand } from './history.js';
 import { handleIssueCommand } from './issue.js';
@@ -432,6 +434,22 @@ export const COMMAND_REGISTRY = {
 		category: 'diagnostics',
 		aliasOf: 'diagnose',
 		deprecated: true,
+	},
+	'guardrail explain': {
+		handler: (ctx) => handleGuardrailExplain(ctx.directory, ctx.args),
+		description:
+			'Dry-run: show what the guardrails would do to a command or write target (executes nothing)',
+		category: 'diagnostics',
+		toolPolicy: 'agent',
+		toolNoArgs: false,
+	},
+	'guardrail-log': {
+		handler: (ctx) => handleGuardrailLog(ctx.directory, ctx.args),
+		description:
+			'Read the guardrail decision log (use --blocks-only for blocks)',
+		category: 'diagnostics',
+		toolPolicy: 'agent',
+		toolNoArgs: false,
 	},
 	preflight: {
 		handler: (ctx) => handlePreflightCommand(ctx.directory, ctx.args),
