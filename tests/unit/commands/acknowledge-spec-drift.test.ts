@@ -506,6 +506,12 @@ describe('handleAcknowledgeSpecDriftCommand', () => {
 
 			// spec-staleness.json should NOT be deleted (since we rejected the ack)
 			expect(existsSync(specStalenessPath)).toBe(true);
+
+			// F-006: content must be preserved unchanged on rejection
+			const stalenessContent = readFileSync(specStalenessPath, 'utf-8');
+			const stalenessData = JSON.parse(stalenessContent);
+			expect(stalenessData.specHash_plan).toBe('oldhash123');
+			expect(stalenessData.reason).toBe('spec.md has been modified');
 		});
 	});
 
