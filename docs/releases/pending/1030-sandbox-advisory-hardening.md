@@ -1,6 +1,8 @@
-# Sandbox fix-forward: advisory hardening (#1030)
+# Sandbox advisory hardening (#1399)
 
-Addresses six advisory findings from the PR #1015 council review:
+Addresses five of six advisory findings from the PR #1015 council review. Finding 3 (Windows native AppContainer/Restricted Token) is tracked separately.
+
+## Changes
 
 - **macOS SBPL comment (MEDIUM):** Updated the `sandbox-exec-executor` module docstring and
   inline comment to accurately describe the profile scope. The profile uses `(allow default)`
@@ -26,3 +28,18 @@ Addresses six advisory findings from the PR #1015 council review:
   PATH string in `WindowsSandboxExecutor` with a runtime lookup via `process.env.SystemRoot`,
   falling back to `C:\Windows` when the variable is not set. This ensures the sandbox PATH
   is correct on non-standard Windows installations (e.g. `D:\Windows`).
+
+## Security hardening (added in same PR)
+
+During review of the original Windows PS-native handling change, a command-injection vulnerability was identified in the `Invoke-Expression` execution path. The original `psStringEscape` function only escaped `` ` $ " ``, which left the path vulnerable to statement separator (`;`), call operator (`&`), pipeline (`|`), subexpression (`( )`), and variable reference (`$`) injection. This has been fixed in the same PR by:
+
+- Restricting the `isPowerShellNativeCommand` whitelist to filesystem-only cmdlets (Remove-Item, Copy-Item, Get-ChildItem, etc.) plus their common aliases
+- Adding a new `isSafePsCommandBody` validation that rejects any command body containing `;`, `&`, `|`, backtick, `$`, parentheses, or newlines
+- Throwing `SandboxError` with code `UNSAFE_PS_COMMAND` when validation fails
+
+## Pre-existing issues (advisory for follow-up)
+
+The following issues were identified during review but pre-existed the PR and are out of scope. They are tracked for follow-up:
+
+- **`cmd /c` path cmd.exe metacharacter bypass:** The `cmd /c "${escapedCommand}"` path in `WindowsSandboxExecutor.wrapCommand()` does not escape cmd.exe metacharacters (`&`, `|`, `%VAR%`, `^`, `>`, `<`). `psStringEscape` only protects against PS string escaping. A follow-up should add a separate `cmdStringEscape` for the `cmd /c` branch.
+- **macOS SBPL `(allow default)` first-match issue:** The macOS `sandbox-exec` profile starts with `(allow default)` which, under SBPL first-match semantics, makes the subsequent `(deny file-write*)` rules unreachable. The file-write containment does not actually work as the docstring describes. A follow-up should reorder the profile to deny first, then allow.

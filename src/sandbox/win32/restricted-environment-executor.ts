@@ -99,23 +99,54 @@ function psStringEscape(s: string): string {
 /**
  * Resolve the safe Windows PATH using the actual SystemRoot environment variable,
  * falling back to `C:\Windows` when SystemRoot is not set (non-standard installations).
+ *
+ * Validation is required to prevent PATH injection via a tampered SystemRoot value.
+ * The following are rejected and cause a fallback to `C:\Windows`:
+ *   - undefined / null (use fallback)
+ *   - empty string (use fallback)
+ *   - relative paths (use fallback)
+ *   - paths containing PATH separators (`;`) (use fallback)
+ *   - paths containing shell metacharacters such as quotes, angle brackets, pipes,
+ *     or glob characters (use fallback)
+ *
+ * When validation fails, the safe default `C:\Windows` is used defensively.
  */
 function getSafeWindowsPath(): string {
-	const sysRoot = process.env.SystemRoot ?? 'C:\\Windows';
+	const raw = process.env.SystemRoot;
+	const isValid =
+		typeof raw === 'string' &&
+		raw.length > 0 &&
+		/^[A-Za-z]:[\\/](?:[^\\/;"'<>|*?\r\n]+[\\/]?)*$/.test(raw);
+	const sysRoot = isValid ? raw : 'C:\\Windows';
 	return `${sysRoot}\\System32;${sysRoot}`;
 }
 
 /**
- * Return true when the command begins with a PowerShell-native cmdlet or syntax
- * that would fail when passed to `cmd /c`.
+ * Return true when the command begins with a filesystem-only PowerShell-native
+ * cmdlet (or a common alias for one) that would fail when passed to `cmd /c`.
+ *
+ * The whitelist is intentionally restricted to read/write filesystem operations
+ * to minimize the attack surface of the Invoke-Expression execution path.
  *
  * Commands in this category must be invoked directly inside the PowerShell
  * script rather than via `cmd /c`.
  */
 function isPowerShellNativeCommand(command: string): boolean {
-	return /^(?:Remove-Item|Copy-Item|Move-Item|Rename-Item|New-Item|Get-Item|Get-ChildItem|Get-Content|Set-Content|Add-Content|Clear-Content|Test-Path|Resolve-Path|Split-Path|Join-Path|Out-File|Tee-Object|Select-Object|Where-Object|ForEach-Object|Sort-Object|Group-Object|Measure-Object|Compare-Object|Select-String|Write-Output|Write-Host|Write-Error|Write-Verbose|Write-Debug|Read-Host|New-Object|Set-Variable|Get-Variable|Remove-Variable|Export-Csv|Import-Csv|ConvertTo-Json|ConvertFrom-Json|ConvertTo-Xml|Start-Process|Stop-Process|Get-Process|Wait-Process|Invoke-WebRequest|Invoke-RestMethod|Start-Sleep|Get-Date|Format-Table|Format-List|Format-Wide)\b/i.test(
+	return /^(?:Remove-Item|rm|del|erase|Copy-Item|cp|copy|Move-Item|mv|move|Rename-Item|ren|New-Item|ni|Get-Item|gi|Get-ChildItem|ls|dir|gci|Get-Content|cat|type|gc|Set-Content|sc|Add-Content|ac|Clear-Content|clc|Test-Path|Resolve-Path|Split-Path|Join-Path|Out-File|Get-Date)\b/i.test(
 		command.trimStart(),
 	);
+}
+
+/**
+ * Validate that a PowerShell-native command body is free of characters that
+ * enable injection when the command is executed via Invoke-Expression.
+ *
+ * Returns false if the command contains any of: semicolon (statement
+ * separator), ampersand (call operator), pipeline, backtick (PS escape),
+ * dollar sign (variable prefix), parentheses (subexpression), or newlines.
+ */
+function isSafePsCommandBody(command: string): boolean {
+	return !/[;&|`$()\r\n]/.test(command);
 }
 
 /**
@@ -228,14 +259,23 @@ export class WindowsSandboxExecutor implements SandboxExecutor {
 	 *   - Sets scoped temp directory (%TEMP%, %TMP%)
 	 *   - Restricts PATH to safe system paths only
 	 *   - Removes dangerous environment variables that could be used to bypass restrictions
-	 *   - Executes PowerShell-native cmdlets (Remove-Item, Copy-Item, etc.) via Invoke-Expression,
+	 *   - Executes PowerShell-native cmdlets (filesystem cmdlets only) via Invoke-Expression,
 	 *     and all other commands via cmd /c inside a PowerShell script
+	 *
+	 * Safety checks applied before wrapping:
+	 *   - PowerShell escape patterns are rejected via detectPowerShellEscape
+	 *   - PowerShell-native commands are restricted to a filesystem-only cmdlet whitelist
+	 *   - PowerShell-native command bodies must not contain statement separators (;),
+	 *     call operator (&), pipelines (|), backtick escapes (`), variable references ($),
+	 *     subexpressions/parentheses, or newlines
 	 *
 	 * @param command   - Raw shell command to execute inside the sandbox
 	 * @param scopePaths - Additional scope paths to allow (merged with constructor scope)
 	 * @param tempDir   - Optional temp directory override
 	 * @returns A PowerShell-wrapped command string ready for shell execution,
 	 *          or the raw command string when the sandbox is unavailable (passthrough mode)
+	 * @throws {SandboxError} UNSAFE_PS_COMMAND when a PowerShell-native command body
+	 *         contains characters that enable command injection via Invoke-Expression
 	 */
 	wrapCommand(command: string, scopePaths: string[], tempDir?: string): string {
 		// Throw when disabled or unavailable
@@ -270,6 +310,16 @@ export class WindowsSandboxExecutor implements SandboxExecutor {
 			throw new SandboxError(
 				'Command targets paths outside authorized scopes',
 				'PATH_ESCAPE_SCOPE',
+			);
+		}
+
+		// Reject PowerShell-native commands whose body contains characters that
+		// enable injection when executed via Invoke-Expression (statement
+		// separators, call operator, pipeline, variable references, subexpressions).
+		if (isPowerShellNativeCommand(command) && !isSafePsCommandBody(command)) {
+			throw new SandboxError(
+				'PowerShell-native command body contains unsafe characters',
+				'UNSAFE_PS_COMMAND',
 			);
 		}
 
@@ -316,7 +366,7 @@ try {
     }
   }
 
-  # Execute the command (PS-native cmdlets run directly; others via cmd /c)
+  # Execute the command — PS-native cmdlets via Invoke-Expression, others via the standard command interpreter
   ${commandExec};
 } catch {
   Write-Error $_.Exception.Message;

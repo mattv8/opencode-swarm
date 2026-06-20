@@ -48,7 +48,26 @@ import * as edge from '../../../src/sandbox/win32/edge-cases';
 // WindowsSandboxExecutor — restricted-environment-executor.ts
 // ---------------------------------------------------------------------------
 
-import { WindowsSandboxExecutor } from '../../../src/sandbox/win32/restricted-environment-executor';
+import { SandboxError } from '../../../src/sandbox/executor';
+import {
+	_internals as reInternals,
+	WindowsSandboxExecutor,
+} from '../../../src/sandbox/win32/restricted-environment-executor';
+
+// Save real implementation
+const realProbeWindowsSandbox = reInternals.probeWindowsSandbox;
+
+afterEach(() => {
+	(
+		reInternals as { probeWindowsSandbox: typeof realProbeWindowsSandbox }
+	).probeWindowsSandbox = realProbeWindowsSandbox;
+});
+
+// Mock the sandbox probe so wrapCommand reaches string-level validation on all platforms.
+function mockProbeAvailable() {
+	(reInternals as { probeWindowsSandbox: () => boolean }).probeWindowsSandbox =
+		() => true;
+}
 
 // ---------------------------------------------------------------------------
 // Test suite — NativeWindowsSandboxExecutor
@@ -709,56 +728,222 @@ describe('detectTokenManipulation', () => {
 
 describe('WindowsSandboxExecutor', () => {
 	describe('getEnvOverrides() PATH resolution', () => {
-		test('PATH includes System32 relative to SystemRoot env var', () => {
-			// The executor should use process.env.SystemRoot, not a hardcoded C:\Windows.
-			// We verify the pattern rather than the exact value since SystemRoot differs
-			// on non-standard installations and is undefined on non-Windows CI.
-			const executor = new WindowsSandboxExecutor([]);
-			const env = executor.getEnvOverrides();
-			const pathValue = env.PATH ?? '';
+		const originalSystemRoot = process.env.SystemRoot;
 
-			// Path must contain System32 in some form
-			expect(pathValue.toLowerCase()).toContain('system32');
+		afterEach(() => {
+			if (originalSystemRoot === undefined) {
+				delete process.env.SystemRoot;
+			} else {
+				process.env.SystemRoot = originalSystemRoot;
+			}
 		});
 
-		test('PATH does not fall through to undefined', () => {
+		test('PATH includes System32 and uses SystemRoot env var', () => {
+			process.env.SystemRoot = 'C:\\Windows';
 			const executor = new WindowsSandboxExecutor([]);
-			const env = executor.getEnvOverrides();
-			expect(typeof env.PATH).toBe('string');
-			expect((env.PATH as string).length).toBeGreaterThan(0);
+			const path = executor.getEnvOverrides().PATH ?? '';
+			expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+		});
+
+		test('PATH falls back to C:\\Windows when SystemRoot is missing', () => {
+			delete process.env.SystemRoot;
+			const executor = new WindowsSandboxExecutor([]);
+			const path = executor.getEnvOverrides().PATH ?? '';
+			expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+		});
+
+		test('PATH uses non-standard SystemRoot when it is valid', () => {
+			process.env.SystemRoot = 'D:\\WinNT';
+			const executor = new WindowsSandboxExecutor([]);
+			const path = executor.getEnvOverrides().PATH ?? '';
+			expect(path).toBe('D:\\WinNT\\System32;D:\\WinNT');
 		});
 	});
 
 	describe('wrapCommand() PowerShell-native command handling', () => {
-		test.skipIf(!isWin)(
-			'PS-native command (Remove-Item) uses Invoke-Expression not cmd /c',
-			() => {
-				const executor = new WindowsSandboxExecutor([]);
-				if (!executor.isAvailable()) return;
-				const wrapped = executor.wrapCommand('Remove-Item foo.txt', []);
-				expect(wrapped.toLowerCase()).toContain('invoke-expression');
-				expect(wrapped).not.toContain('cmd /c');
-			},
-		);
+		test('PS-native command (Remove-Item) uses Invoke-Expression not cmd /c', () => {
+			mockProbeAvailable();
+			const executor = new WindowsSandboxExecutor([]);
+			expect(executor.isAvailable()).toBe(true); // Fail loud if mock did not apply
+			const wrapped = executor.wrapCommand('Remove-Item foo.txt', []);
+			expect(wrapped.toLowerCase()).toContain('invoke-expression');
+			expect(wrapped).not.toMatch(/cmd\s+\/c\s+"/i);
+		});
 
-		test.skipIf(!isWin)(
-			'non-PS-native command (echo hello) uses cmd /c not Invoke-Expression',
-			() => {
-				const executor = new WindowsSandboxExecutor([]);
-				if (!executor.isAvailable()) return;
-				const wrapped = executor.wrapCommand('echo hello', []);
-				expect(wrapped.toLowerCase()).toContain('cmd /c');
-			},
-		);
+		test('non-PS-native command (echo hello) uses cmd /c not Invoke-Expression', () => {
+			mockProbeAvailable();
+			const executor = new WindowsSandboxExecutor([]);
+			expect(executor.isAvailable()).toBe(true); // Fail loud if mock did not apply
+			const wrapped = executor.wrapCommand('echo hello', []);
+			expect(wrapped).toMatch(/cmd\s+\/c\s+"/i);
+		});
 
-		test.skipIf(!isWin)(
-			'Copy-Item is treated as PS-native and uses Invoke-Expression',
-			() => {
-				const executor = new WindowsSandboxExecutor([]);
-				if (!executor.isAvailable()) return;
-				const wrapped = executor.wrapCommand('Copy-Item src.txt dest.txt', []);
-				expect(wrapped.toLowerCase()).toContain('invoke-expression');
-			},
+		test('Copy-Item is treated as PS-native and uses Invoke-Expression', () => {
+			mockProbeAvailable();
+			const executor = new WindowsSandboxExecutor([]);
+			expect(executor.isAvailable()).toBe(true); // Fail loud if mock did not apply
+			const wrapped = executor.wrapCommand('Copy-Item src.txt dest.txt', []);
+			expect(wrapped.toLowerCase()).toContain('invoke-expression');
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getSafeWindowsPath — SystemRoot validation
+// ---------------------------------------------------------------------------
+
+describe('getSafeWindowsPath SystemRoot validation', () => {
+	const originalSystemRoot = process.env.SystemRoot;
+
+	afterEach(() => {
+		if (originalSystemRoot === undefined) {
+			delete process.env.SystemRoot;
+		} else {
+			process.env.SystemRoot = originalSystemRoot;
+		}
+	});
+
+	test('uses C:\\Windows when SystemRoot is undefined', () => {
+		delete process.env.SystemRoot;
+		const executor = new WindowsSandboxExecutor([]);
+		const path = executor.getEnvOverrides().PATH ?? '';
+		expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+	});
+
+	test('uses C:\\Windows when SystemRoot is empty string', () => {
+		process.env.SystemRoot = '';
+		const executor = new WindowsSandboxExecutor([]);
+		const path = executor.getEnvOverrides().PATH ?? '';
+		expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+	});
+
+	test('uses C:\\Windows when SystemRoot is relative path', () => {
+		process.env.SystemRoot = '..\\Windows';
+		const executor = new WindowsSandboxExecutor([]);
+		const path = executor.getEnvOverrides().PATH ?? '';
+		expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+	});
+
+	test('uses C:\\Windows when SystemRoot contains semicolon (PATH injection)', () => {
+		process.env.SystemRoot = 'C:\\Windows;C:\\evil';
+		const executor = new WindowsSandboxExecutor([]);
+		const path = executor.getEnvOverrides().PATH ?? '';
+		expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+		expect(path).not.toContain('C:\\evil');
+	});
+
+	test('uses SystemRoot when it is a valid absolute path', () => {
+		process.env.SystemRoot = 'D:\\WinNT';
+		const executor = new WindowsSandboxExecutor([]);
+		const path = executor.getEnvOverrides().PATH ?? '';
+		expect(path).toBe('D:\\WinNT\\System32;D:\\WinNT');
+	});
+
+	test('uses C:\\Windows when SystemRoot contains quote characters', () => {
+		process.env.SystemRoot = 'C:\\Windows"';
+		const executor = new WindowsSandboxExecutor([]);
+		const path = executor.getEnvOverrides().PATH ?? '';
+		expect(path).toBe('C:\\Windows\\System32;C:\\Windows');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// WindowsSandboxExecutor — PowerShell command-body safety validation
+// ---------------------------------------------------------------------------
+
+describe('WindowsSandboxExecutor wrapCommand unsafe PS body detection', () => {
+	test('throws UNSAFE_PS_COMMAND for statement separator', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		try {
+			executor.wrapCommand('Remove-Item foo; whoami', []);
+			expect.unreachable('should have thrown');
+		} catch (err) {
+			expect(err).toBeInstanceOf(SandboxError);
+			expect((err as InstanceType<typeof SandboxError>).code).toBe(
+				'UNSAFE_PS_COMMAND',
+			);
+		}
+	});
+
+	test('allows safe filesystem command without injection characters', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		expect(() =>
+			executor.wrapCommand('Get-ChildItem -Path "C:\\foo"', []),
+		).not.toThrow();
+	});
+
+	test('throws UNSAFE_PS_COMMAND for subexpression', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		try {
+			executor.wrapCommand('Remove-Item -Path (Get-Foo).FullName', []);
+			expect.unreachable('should have thrown');
+		} catch (err) {
+			expect(err).toBeInstanceOf(SandboxError);
+			expect((err as InstanceType<typeof SandboxError>).code).toBe(
+				'UNSAFE_PS_COMMAND',
+			);
+		}
+	});
+
+	test('throws UNSAFE_PS_COMMAND for variable reference', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		try {
+			executor.wrapCommand('Get-ChildItem $env:TEMP', []);
+			expect.unreachable('should have thrown');
+		} catch (err) {
+			expect(err).toBeInstanceOf(SandboxError);
+			expect((err as InstanceType<typeof SandboxError>).code).toBe(
+				'UNSAFE_PS_COMMAND',
+			);
+		}
+	});
+
+	test('throws UNSAFE_PS_COMMAND for pipeline operator', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		try {
+			executor.wrapCommand(
+				'Get-ChildItem | Where-Object { $_.Name -eq "foo" }',
+				[],
+			);
+			expect.unreachable('should have thrown');
+		} catch (err) {
+			expect(err).toBeInstanceOf(SandboxError);
+			expect((err as InstanceType<typeof SandboxError>).code).toBe(
+				'UNSAFE_PS_COMMAND',
+			);
+		}
+	});
+
+	test('recognizes Remove-Item alias (rm) as PS-native and validates body', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		expect(() => executor.wrapCommand('rm foo.txt', [])).not.toThrow();
+	});
+
+	test('recognizes Get-ChildItem alias (ls) as PS-native and validates body', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		expect(() => executor.wrapCommand('ls', [])).not.toThrow();
+	});
+
+	test('alias with injection still rejected', () => {
+		mockProbeAvailable();
+		const executor = new WindowsSandboxExecutor([]);
+		// rm; whoami — alias matches, but body has ;, must be rejected
+		let caught: unknown;
+		try {
+			executor.wrapCommand('rm; whoami', []);
+		} catch (e) {
+			caught = e;
+		}
+		expect(caught).toBeInstanceOf(SandboxError);
+		expect((caught as InstanceType<typeof SandboxError>).code).toBe(
+			'UNSAFE_PS_COMMAND',
 		);
 	});
 });
