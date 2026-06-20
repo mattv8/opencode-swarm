@@ -8,6 +8,17 @@ const GIT_SNAPSHOT_MAX_BUFFER = 512 * 1024;
 
 type SpawnSync = typeof child_process.spawnSync;
 
+interface CaptureWorkspaceSnapshotOptions {
+	scope?: string | null;
+	prHeadSha?: string | null;
+	/**
+	 * Re-resolve the current upstream ref for freshness validation. When the
+	 * dispatch captured an explicit PR head SHA, ingestion must compare against a
+	 * live local ref, not replay the stored metadata back into the snapshot.
+	 */
+	resolveCurrentPrHeadSha?: boolean;
+}
+
 function runGit(directory: string, args: string[]): string | null {
 	const result = _internals.spawnSync('git', ['-C', directory, ...args], {
 		cwd: directory,
@@ -22,20 +33,22 @@ function runGit(directory: string, args: string[]): string | null {
 
 export function captureWorkspaceSnapshot(
 	directory: string,
-	optionsOrScope:
-		| string
-		| null
-		| { scope?: string | null; prHeadSha?: string | null } = null,
+	optionsOrScope: string | null | CaptureWorkspaceSnapshotOptions = null,
 	prHeadShaArg: string | null = null,
 ): BackgroundWorkspaceSnapshot {
 	const scope =
 		typeof optionsOrScope === 'object' && optionsOrScope !== null
 			? (optionsOrScope.scope ?? null)
 			: optionsOrScope;
-	const prHeadSha =
-		typeof optionsOrScope === 'object' && optionsOrScope !== null
-			? (optionsOrScope.prHeadSha ?? null)
-			: prHeadShaArg;
+	const prHeadSha = (() => {
+		if (typeof optionsOrScope !== 'object' || optionsOrScope === null) {
+			return prHeadShaArg;
+		}
+		if (optionsOrScope.resolveCurrentPrHeadSha) {
+			return runGit(directory, ['rev-parse', '@{upstream}']);
+		}
+		return optionsOrScope.prHeadSha ?? null;
+	})();
 	const gitHead = runGit(directory, ['rev-parse', 'HEAD']);
 	const porcelain = runGit(directory, [
 		'status',

@@ -32,6 +32,8 @@ const GATE_EVIDENCE_ROLES = new Set([
 	'explorer',
 	'sme',
 ]);
+// Only reviewer/test_engineer advance the live task state machine. The broader
+// set above records gate evidence for other gate-bearing background roles.
 
 type StageBStateRole = 'reviewer' | 'test_engineer';
 
@@ -57,8 +59,9 @@ export function validateStageBWorkspace(
 	record: BackgroundDelegationRecord,
 ): { ok: boolean; stale: boolean; reason?: string } {
 	const actualWorkspace = captureWorkspaceSnapshot(directory, {
-		prHeadSha: record.workspace?.prHeadSha ?? null,
 		scope: record.workspace?.scope ?? null,
+		prHeadSha: record.workspace?.prHeadSha ?? null,
+		resolveCurrentPrHeadSha: record.workspace?.prHeadSha !== null,
 	});
 	const check = compareWorkspaceSnapshots(record.workspace, actualWorkspace);
 	return { ...check, ok: !check.stale };
@@ -71,6 +74,8 @@ export async function ingestBackgroundStageBCompletion(args: {
 }): Promise<StageBIngestionResult> {
 	const taskId = args.record.evidenceTaskId ?? args.record.planTaskId;
 	if (!taskId || !isBackgroundGateBearingRecord(args.record)) {
+		// The trusted terminal completion is still settled in the durable ledger by
+		// the caller; it simply has no Stage B evidence/state side effects.
 		return { ok: true, consumed: false };
 	}
 

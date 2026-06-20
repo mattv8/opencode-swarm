@@ -114,6 +114,37 @@ describe('background completion observer', () => {
 		expect(record?.result?.text).toBe('done');
 	});
 
+	it('leaves non-gate-bearing background completions as settled ledger rows only', async () => {
+		await recordPendingDelegation(dir, {
+			correlationId: 'ses_lane_only',
+			jobId: 'job_lane_only',
+			subagentSessionId: 'ses_lane_only',
+			parentSessionId: 'parent_session',
+			callID: 'batch-1',
+			normalizedAgent: 'explorer',
+			swarmPrefixedAgent: 'explorer',
+			planTaskId: null,
+			evidenceTaskId: null,
+			batchId: 'batch-1',
+			laneId: 'lane-1',
+		});
+
+		const obs = createBackgroundCompletionObserver({
+			config: { enabled: true },
+			directory: dir,
+		});
+		await obs.event(
+			syntheticPartEvent({
+				text: completedEnvelope('ses_lane_only'),
+				synthetic: true,
+			}),
+		);
+
+		const record = findByCorrelationId(dir, 'ses_lane_only');
+		expect(record?.status).toBe('completed');
+		expect(await readTaskEvidence(dir, 'lane-1')).toBeNull();
+	});
+
 	it('applies trusted background Stage B reviewer completion to workflow state, evidence, and receipt', async () => {
 		const session = ensureAgentSession('parent_session');
 		session.taskWorkflowStates.set('1.1', 'coder_delegated');
@@ -251,6 +282,59 @@ describe('background completion observer', () => {
 		expect(await readTaskEvidence(dir, '2.1')).toBeNull();
 	});
 
+	it('marks background Stage B completion stale when tracked prHeadSha changed', async () => {
+		const session = ensureAgentSession('parent_session');
+		session.taskWorkflowStates.set('2.1-pr', 'coder_delegated');
+		const staleWorkspace: BackgroundWorkspaceSnapshot = {
+			directory: dir,
+			gitHead: 'same-head',
+			dirtyHash: null,
+			prHeadSha: 'origin/pr-head-old',
+			scope: '2.1-pr',
+		};
+		workspaceSnapshotInternals.spawnSync = ((_command, args) => {
+			const argv = Array.isArray(args) ? args.map(String) : [];
+			if (argv.includes('HEAD')) {
+				return { status: 0, stdout: 'same-head\n', stderr: '' };
+			}
+			if (argv.includes('--porcelain=v1')) {
+				return { status: 0, stdout: '', stderr: '' };
+			}
+			if (argv.includes('@{upstream}')) {
+				return { status: 0, stdout: 'origin/pr-head-new\n', stderr: '' };
+			}
+			return { status: 1, stdout: '', stderr: 'unexpected git command' };
+		}) as typeof workspaceSnapshotInternals.spawnSync;
+
+		await recordPendingDelegation(dir, {
+			correlationId: 'ses_prhead_stale',
+			jobId: 'job_prhead_stale',
+			subagentSessionId: 'ses_prhead_stale',
+			parentSessionId: 'parent_session',
+			callID: 'c-pr-stale',
+			normalizedAgent: 'reviewer',
+			swarmPrefixedAgent: 'reviewer',
+			planTaskId: '2.1-pr',
+			evidenceTaskId: '2.1-pr',
+			workspace: staleWorkspace,
+		});
+
+		const obs = createBackgroundCompletionObserver({
+			config: { enabled: true },
+			directory: dir,
+		});
+		await obs.event(
+			syntheticPartEvent({
+				text: completedEnvelope('ses_prhead_stale'),
+				synthetic: true,
+			}),
+		);
+
+		expect(getTaskState(session, '2.1-pr')).toBe('coder_delegated');
+		expect(findByCorrelationId(dir, 'ses_prhead_stale')?.status).toBe('stale');
+		expect(await readTaskEvidence(dir, '2.1-pr')).toBeNull();
+	});
+
 	it('keeps failed Stage B ingestion retryable until evidence is applied', async () => {
 		const session = ensureAgentSession('parent_session');
 		session.taskWorkflowStates.set('2.2', 'coder_delegated');
@@ -300,6 +384,49 @@ describe('background completion observer', () => {
 		expect(getTaskState(session, '2.2')).toBe('reviewer_run');
 		const evidence = await readTaskEvidence(dir, '2.2');
 		expect(evidence?.required_gates).toEqual(['reviewer', 'test_engineer']);
+	});
+
+	it('keeps unrecoverable Stage B ingestion failures at ingestion_error on replay', async () => {
+		const session = ensureAgentSession('parent_session');
+		session.taskWorkflowStates.set('2.3', 'coder_delegated');
+		const evidenceDir = path.join(dir, '.swarm', 'evidence');
+		fs.mkdirSync(evidenceDir, { recursive: true });
+		fs.writeFileSync(path.join(evidenceDir, '2.3.json'), '{still bad json');
+
+		await recordPendingDelegation(dir, {
+			correlationId: 'ses_retry_still_broken',
+			jobId: 'job_retry_still_broken',
+			subagentSessionId: 'ses_retry_still_broken',
+			parentSessionId: 'parent_session',
+			callID: 'c-retry-still-broken',
+			normalizedAgent: 'reviewer',
+			swarmPrefixedAgent: 'reviewer',
+			planTaskId: '2.3',
+			evidenceTaskId: '2.3',
+		});
+
+		const obs = createBackgroundCompletionObserver({
+			config: { enabled: true },
+			directory: dir,
+		});
+		await obs.event(
+			syntheticPartEvent({
+				text: completedEnvelope('ses_retry_still_broken'),
+				synthetic: true,
+			}),
+		);
+		await obs.event(
+			syntheticPartEvent({
+				text: completedEnvelope('ses_retry_still_broken'),
+				synthetic: true,
+			}),
+		);
+
+		expect(findByCorrelationId(dir, 'ses_retry_still_broken')?.status).toBe(
+			'ingestion_error',
+		);
+		expect(getTaskState(session, '2.3')).toBe('coder_delegated');
+		expect(await readTaskEvidence(dir, '2.3')).toBeNull();
 	});
 
 	it('applies trusted background test_engineer completion only after reviewer completion is present', async () => {
