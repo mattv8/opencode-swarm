@@ -20,43 +20,85 @@ permissions:
   contents: read
 
 jobs:
+  # Fast (~5s) detection of release-please branches. Works for both PR events
+  # (checks github.head_ref) and merge-queue events (checks commit messages
+  # since github.head_ref is unavailable in merge groups).
+  detect-release:
+    runs-on: ubuntu-latest
+    outputs:
+      is-release: ${{ steps.check.outputs.is-release }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        if: github.event_name == 'merge_group'
+        with:
+          fetch-depth: 10
+      - name: Detect release-please
+        id: check
+        shell: bash
+        run: |
+          if [[ "$BRANCH" == release-please--* ]]; then
+            echo "is-release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT" == "merge_group" ]] && git log --format='%s' --max-count=10 | grep -q '^chore(main): release'; then
+            echo "is-release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "is-release=false" >> "$GITHUB_OUTPUT"
+        env:
+          BRANCH: ${{ github.head_ref }}
+          EVENT: ${{ github.event_name }}
+
   quality:
+    needs: [detect-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        if: needs.detect-release.outputs.is-release != 'true'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - name: Cache bun dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       - name: Type check
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun run typecheck
       - name: Biome CI
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bunx biome ci .
       - name: Mock isolation compliance check
+        if: needs.detect-release.outputs.is-release != 'true'
         shell: bash
         run: chmod +x scripts/check-mock-cleanup.sh && bash scripts/check-mock-cleanup.sh
       - name: Engineering invariant checks
+        if: needs.detect-release.outputs.is-release != 'true'
         shell: bash
         run: chmod +x scripts/check-invariants.sh && bash scripts/check-invariants.sh
       - name: Tool registration coherence check
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun run scripts/check-tool-registration.ts
       - name: Cross-contamination check (mock.module / vi.mock leaks)
+        if: needs.detect-release.outputs.is-release != 'true'
         shell: bash
         run: chmod +x scripts/check-cross-contamination.sh && bash scripts/check-cross-contamination.sh
 
   # Two-tier CI: on pull_request, run ubuntu-only with 4 shards for fast feedback.
   # On merge_group (merge queue), run the full 3-OS matrix for merge safety.
+  # On release-please branches, all steps are skipped via detect-release job
+  # (version bumps don't need tests — applies to both PR and merge-queue tiers).
   # Test files are discovered automatically via find and distributed round-robin
   # across shards — no hardcoded file lists, no duplication.
   unit:
-    needs: quality
+    needs: [detect-release, quality]
     strategy:
       fail-fast: false
       matrix:
@@ -69,11 +111,14 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        if: needs.detect-release.outputs.is-release != 'true'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - name: Cache bun dependencies
         id: cache-bun
+        if: needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
@@ -82,12 +127,15 @@ jobs:
             ${{ runner.os }}-bun-
             ${{ runner.os }}-bun
       - name: Install dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       # dist/ is generated output and no longer committed (#1047); build it so the
       # tests under tests/unit/build/ that load the bundle have a dist/ to read.
       - name: Build
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun run build
       - name: Collect and partition test files
+        if: needs.detect-release.outputs.is-release != 'true'
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}
@@ -102,6 +150,7 @@ jobs:
           fi
           echo "Shard ${SHARD}/${num_shards}"
       - name: Run unit tests
+        if: needs.detect-release.outputs.is-release != 'true'
         shell: bash
         run: |
           failed=0
@@ -125,30 +174,30 @@ jobs:
           exit $failed
 
   # Merge-queue-only: on pull_request all steps are skipped, job reports success
-  # to satisfy required checks without doing work.
+  # to satisfy required checks without doing work. Also skipped for release-please.
   integration:
-    needs: unit
+    needs: [detect-release, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - name: Cache bun dependencies
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       - name: Integration tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         shell: bash
         run: |
           failed=0
@@ -168,109 +217,124 @@ jobs:
           done
           exit $failed
 
+  # Release-please PRs skip package-check (version bumps don't change the bundle).
   package-check:
-    needs: quality
+    needs: [detect-release, quality]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        if: needs.detect-release.outputs.is-release != 'true'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: needs.detect-release.outputs.is-release != 'true'
         with:
           node-version: "22"
       - name: Cache bun dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       - name: Build
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun run build
       - name: Validate packed npm artifact
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun run package:smoke
 
+  # Release-please PRs skip security tests (version bumps don't affect security).
   security:
-    needs: quality
+    needs: [detect-release, quality]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        if: needs.detect-release.outputs.is-release != 'true'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - name: Cache bun dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       - name: Security tests
+        if: needs.detect-release.outputs.is-release != 'true'
         run: bun test tests/security --timeout 120000
 
   # Merge-queue-only: on pull_request all steps are skipped, job reports success.
   php-validation:
-    needs: quality
+    needs: [detect-release, quality]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
       - uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         with:
           php-version: "8.2"
           tools: composer
           coverage: none
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - name: Cache bun dependencies
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       - name: PHP profile command surface tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun --smol test tests/unit/lang/profiles-php.test.ts --timeout 60000
       - name: PHP framework detection and command overlay tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun --smol test tests/unit/lang/framework-detector.test.ts --timeout 60000
       - name: PHP Composer ecosystem discovery tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun --smol test tests/unit/build/discovery-php.test.ts --timeout 60000
       - name: Composer audit handler tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun --smol test tests/unit/tools/pkg-audit-composer.test.ts --timeout 60000
       - name: Laravel SAST rule tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun --smol test tests/unit/tools/sast-scan-laravel.test.ts --timeout 60000
       - name: Laravel fixture detection and SAST coverage tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun --smol test tests/unit/lang/laravel-fixture.test.ts --timeout 60000
 
   # Merge-queue-only: on pull_request all steps are skipped, job reports success.
   rust-sandbox-runner:
+    needs: [detect-release]
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         with:
           components: rustfmt, clippy
       - name: Cache cargo
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
@@ -280,29 +344,29 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('runners/swarm-sandbox-runner/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
       - name: Check formatting
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         working-directory: runners/swarm-sandbox-runner
         run: cargo fmt --check
       - name: Clippy lint
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         working-directory: runners/swarm-sandbox-runner
         run: cargo clippy --all-targets -- -D warnings
       - name: Run tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         working-directory: runners/swarm-sandbox-runner
         run: cargo test --all-targets
       - name: Build release binary
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         working-directory: runners/swarm-sandbox-runner
         run: cargo build --release
       - name: Probe smoke test
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         working-directory: runners/swarm-sandbox-runner
         run: ./target/release/swarm-sandbox-runner.exe --probe
 
   # Merge-queue-only: on pull_request all steps are skipped, job reports success.
   smoke:
-    needs: [unit, integration, package-check, php-validation, rust-sandbox-runner]
+    needs: [detect-release, unit, integration, package-check, php-validation, rust-sandbox-runner]
     strategy:
       fail-fast: false
       matrix:
@@ -311,32 +375,32 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         with:
           bun-version: "1.3.13"
       - name: Cache bun dependencies
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun install --frozen-lockfile
       - name: Build package
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun run build
       - name: Smoke tests
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         run: bun test tests/smoke --timeout 120000
       - name: Issue #704 repro — Desktop init under Node
         # Loads the compiled dist/ under Node (the runtime OpenCode Desktop's
         # sidecar uses on macOS) and asserts the plugin's `server()` resolves
         # within 10s. Pre-fix this would hang. Runs on Linux, macOS, Windows
         # so the cycle/cap/budget guards are exercised on each OS.
-        if: github.event_name == 'merge_group'
+        if: github.event_name == 'merge_group' && needs.detect-release.outputs.is-release != 'true'
         shell: bash
         run: node scripts/repro-704.mjs

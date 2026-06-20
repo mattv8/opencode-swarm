@@ -32,6 +32,8 @@ The `unit` job matrix gains a `shard` dimension, changing required check names:
 - Enable the GitHub merge queue on `main` in branch protection settings
 - Disable "Require branches to be up to date before merging" (the merge queue handles freshness validation)
 
+**Release-please fast-track:** A `detect-release` job (~5s) identifies release-please branches for both PR and merge-queue events. When detected, all downstream jobs (quality, unit, integration, security, package-check, php-validation, rust-sandbox-runner, smoke) skip their steps and report success immediately. This avoids 15+ minutes of pointless testing on auto-generated version bumps. Detection uses `github.head_ref` for PR events and commit-message matching (`chore(main): release`) for merge-group events where `github.head_ref` is unavailable.
+
 ## Known caveats
 
 - PR runs no longer run integration, smoke, php-validation, or rust-sandbox-runner. Cross-platform and integration bugs are caught at merge queue time instead of during development.
