@@ -46,7 +46,7 @@ const REQUIRED_FUNNEL_ELEMENTS = {
 
 describe('Cross-skill funnel parity verification', () => {
 	describe('All funnel-bearing skills present', () => {
-		for (const skillSlug of FUNNEL_SKILLS) {
+		for (const skillSlug of ALL_FUNNEL_SKILLS) {
 			it(`${skillSlug} skill exists`, () => {
 				const skillPath = join(
 					process.cwd(),
