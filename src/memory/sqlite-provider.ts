@@ -1205,6 +1205,11 @@ function splitSql(sql: string): string[] {
 		}
 
 		if (inSingleQuote) {
+			if (char === "'" && next === "'") {
+				current += "''"; // SQLite escaped single quote
+				i++; // consume both characters
+				continue;
+			}
 			current += char;
 			if (char === "'") {
 				inSingleQuote = false;

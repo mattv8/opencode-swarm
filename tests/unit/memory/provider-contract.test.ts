@@ -1262,4 +1262,35 @@ describe('splitSql', () => {
 		expect(result[0]).toBe('CREATE TABLE foo (id INT)');
 		expect(result[1]).toBe('CREATE TABLE bar (id INT)');
 	});
+
+	test('splitSql: escaped single quote inside string literal', () => {
+		const result = splitSql(
+			"INSERT INTO foo VALUES ('it''s here'); INSERT INTO bar VALUES ('ok');",
+		);
+		expect(result).toHaveLength(2);
+		expect(result[0]).toBe("INSERT INTO foo VALUES ('it''s here')");
+		expect(result[1]).toBe("INSERT INTO bar VALUES ('ok')");
+	});
+
+	test('splitSql: multiple escaped quotes in one string', () => {
+		const result = splitSql(
+			"INSERT INTO foo VALUES ('it''s here and it''s there')",
+		);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toBe(
+			"INSERT INTO foo VALUES ('it''s here and it''s there')",
+		);
+	});
+
+	test('splitSql: escaped quote before closing paren and semicolon', () => {
+		const result = splitSql("INSERT INTO foo VALUES ('test'';)");
+		expect(result).toHaveLength(1);
+		expect(result[0]).toBe("INSERT INTO foo VALUES ('test'';)");
+	});
+
+	test('splitSql: escaped quote with five consecutive quotes', () => {
+		const result = splitSql("SELECT '''''");
+		expect(result).toHaveLength(1);
+		expect(result[0]).toBe("SELECT '''''");
+	});
 });
