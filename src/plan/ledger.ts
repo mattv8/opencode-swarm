@@ -44,7 +44,6 @@ export const LEDGER_EVENT_TYPES = [
 	'snapshot',
 	'execution_profile_set',
 	'execution_profile_locked',
-	'worktree_merge_status_changed',
 ] as const;
 
 export type LedgerEventType = (typeof LEDGER_EVENT_TYPES)[number];
