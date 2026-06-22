@@ -492,12 +492,7 @@ describe('handlePrMonitorStatusCommand', () => {
 			);
 
 			// CLI passes sessionID '' — pre-fix this filtered to zero rows.
-			const result = await handlePrMonitorStatusCommand(
-				tempDir,
-				[],
-				'',
-				'cli',
-			);
+			const result = await handlePrMonitorStatusCommand(tempDir, [], '', 'cli');
 
 			expect(result).toContain('PR Monitor Status — all sessions');
 			expect(result).toContain('Active subscriptions (2):');
@@ -513,12 +508,7 @@ describe('handlePrMonitorStatusCommand', () => {
 		test('empty store returns the generic no-subscriptions message', async () => {
 			mockListActive.mockImplementation(() => Promise.resolve([]));
 
-			const result = await handlePrMonitorStatusCommand(
-				tempDir,
-				[],
-				'',
-				'cli',
-			);
+			const result = await handlePrMonitorStatusCommand(tempDir, [], '', 'cli');
 
 			expect(result).toBe('No active PR subscriptions.');
 		});
