@@ -258,6 +258,18 @@ describe('knowledge-events: append + read', () => {
 			session_id: 's',
 			agent: 'coder',
 		} as unknown as KnowledgeEvent);
+		// Also emit a retrieved event so shown_count is exercised (F-007c).
+		await appendKnowledgeEvent(dir, {
+			type: 'retrieved',
+			trace_id: 't-shown',
+			session_id: 's',
+			agent: 'architect',
+			query: 'q',
+			retrieval_mode: 'manual',
+			result_ids: ['k-live'],
+			ranks: { 'k-live': 1 },
+			scores: { 'k-live': 0.9 },
+		} as unknown as KnowledgeEvent);
 
 		// Corrupt the baseline file on disk.
 		const baselinePath = resolveKnowledgeCounterBaselinePath(dir);
@@ -265,9 +277,11 @@ describe('knowledge-events: append + read', () => {
 		writeFileSync(baselinePath, '{ this is not valid json', 'utf-8');
 
 		const rollups = await readKnowledgeCounterRollups(dir);
-		// Live event survived the corrupt baseline (scoped fail-open), rather than
-		// the outer catch returning an empty map and discarding everything.
+		// Outcome event survived (the primary concern — stall risk).
 		expect(rollups.get('k-live')?.succeeded_after_shown_count).toBe(1);
+		// shown_count from retrieved event also survived (F-007c: corrupt baseline
+		// must not discard any live event, not just outcome events).
+		expect(rollups.get('k-live')?.shown_count).toBe(1);
 	});
 
 	it('memoizes counter rollups while isolating callers and invalidating on writes', async () => {

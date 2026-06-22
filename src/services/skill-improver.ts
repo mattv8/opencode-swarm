@@ -36,6 +36,7 @@ import {
 	type SkillImproverLLMDelegate,
 } from '../hooks/skill-improver-llm-factory.js';
 import { hasActiveFullAuto } from '../state.js';
+import { warn } from '../utils/logger.js';
 import {
 	type AutoApplyResult,
 	autoApplyProposals,
@@ -441,9 +442,14 @@ export async function reconcileStaleActiveSkills(
 			result.skipped.push(skill.slug);
 			continue;
 		}
-		// Stale = unparseable frontmatter (the closed blind spot) or no source ids
-		// to anchor the skill to live knowledge.
-		const stale = !fm || fm.sourceKnowledgeIds.length === 0;
+		// Stale = unparseable frontmatter (the closed blind spot), no source ids
+		// to anchor the skill to live knowledge, or no generated_at timestamp
+		// (gatherInventory flags missing_generated_at; reconcile must match).
+		// Note: updated_after_generation staleness requires a live knowledge
+		// lookup (not available here without loading the full store) — those
+		// skills are detected by gatherInventory but reconciliation for them
+		// is deferred to a future pass that loads the store.
+		const stale = !fm || fm.sourceKnowledgeIds.length === 0 || !fm.generatedAt;
 		if (!stale) continue;
 		result.checked += 1;
 		if (options.dryRun) {
@@ -452,7 +458,7 @@ export async function reconcileStaleActiveSkills(
 			continue;
 		}
 		try {
-			const regen = await regenerateSkill(directory, skill.slug, {
+			const regen = await _internals.regenerateSkill(directory, skill.slug, {
 				evaluate: false,
 			});
 			if (regen.regenerated) {
@@ -470,8 +476,14 @@ export async function reconcileStaleActiveSkills(
 				);
 				if (retire.retired) result.retired.push(skill.slug);
 			}
-		} catch {
+		} catch (err) {
 			// fail-open: skip this skill, continue the sweep.
+			warn(
+				`[skill-improver] reconcileStaleActiveSkills: failed to reconcile '${skill.slug}': ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+			result.skipped.push(skill.slug);
 		}
 	}
 	return result;
@@ -792,4 +804,5 @@ export const _internals = {
 	buildUserPrompt,
 	gatherInventory,
 	reconcileStaleActiveSkills,
+	regenerateSkill,
 };

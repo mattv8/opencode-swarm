@@ -176,6 +176,47 @@ describe('selectCandidateEntries', () => {
 		});
 		expect(cands).toEqual([]);
 	});
+
+	it('blocks a high-priority entry whose failure events produce a net-negative signal (F-007b)', async () => {
+		// Verify the negative-outcome block works end-to-end through
+		// selectCandidateEntries with event-sourced 'outcome' events (not just
+		// inline retrieval_outcomes on the entry). This exercises the additive
+		// merge path: entry counts = 0 (new-style entry), rollup counts built
+		// from emitted 'outcome' events, effectiveRetrievalOutcomes merges them.
+		await seed([
+			makeEntry('high-prio-failing', {
+				confidence: 0.65,
+				directive_priority: 'high',
+				confirmed_by: [
+					{
+						phase_number: 1,
+						confirmed_at: new Date().toISOString(),
+						project_name: 'test',
+					},
+				],
+			}),
+		]);
+		// Emit 3 failure outcomes — enough to drive outcome signal negative.
+		for (let i = 0; i < 3; i++) {
+			await appendKnowledgeEvent(tmp, {
+				type: 'outcome',
+				trace_id: `fail-trace-${i}`,
+				knowledge_id: 'high-prio-failing',
+				outcome: 'failure',
+				evidence_summary: `phase ${i + 1} failed`,
+				session_id: 's',
+				agent: 'coder',
+			} as Parameters<typeof appendKnowledgeEvent>[1]);
+		}
+
+		const cands = await selectCandidateEntries(tmp, {
+			minConfidence: 0.6,
+			minConfirmations: 1,
+		});
+		// Despite qualifying by confidence and confirmations, the net-negative
+		// outcome signal gates it out before the high-priority path is consulted.
+		expect(cands.map((c) => c.id)).not.toContain('high-prio-failing');
+	});
 });
 
 describe('renderSkillMarkdown', () => {

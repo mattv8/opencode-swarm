@@ -957,9 +957,15 @@ export function effectiveRetrievalOutcomes(
 		failed_after_count: 0,
 	};
 	if (!rollup) return base;
+	// Spread rollup over base to get non-count fields (last_applied_at,
+	// last_acknowledged_at, violation_timestamps, etc.) at rollup-precedence, then
+	// explicitly omit `n_a_count` (a CounterRollup-internal field not declared on
+	// RetrievalOutcome — F-004) and override the three additive count fields below.
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	const { n_a_count: _na, ...rollupWithoutNa } = rollup;
 	return {
 		...base,
-		...rollup,
+		...rollupWithoutNa,
 		// Outcome counts are ADDITIVE, not rollup-overwrite (issue #1477): `base`
 		// holds frozen historical counts that were written directly into the entry
 		// before shown→outcome attribution was event-sourced; `rollup` holds the

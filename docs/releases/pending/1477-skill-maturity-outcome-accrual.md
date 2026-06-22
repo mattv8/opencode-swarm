@@ -11,3 +11,16 @@
 ## Why
 
 Issue #1477 reported the knowledge→skill pipeline stalled at "0 of 102 entries eligible" with all outcome counters reading zero. Root-cause tracing showed three compounding defects: the maturity gate offered no priority path for high-value directives (RC-1/RC-4), a lossy read-merge discarded every written outcome (RC-OUTCOMES, the primary cause), and stale active skills could never be detected or repaired. These changes restore legitimate maturation for high-value knowledge, make outcomes actually accrue and reach every consumer, and add a durable repair path for stale skills — without loosening quality gates for ordinary entries.
+
+## Migration steps
+
+No migration required. The outcome-count merge change is backward-compatible: historical entry counts (written by the pre-event-sourcing path) are preserved as the `base` in the additive merge — they are not zeroed, overwritten, or migrated. New `'outcome'` events are appended going forward; existing entries that had counts written directly continue to accumulate those counts correctly.
+
+If any `SKILL.md` files under `.opencode/skills/generated/` lack parseable YAML frontmatter (the detection blind spot closed by this PR), the skill-improver will now surface them as stale and reconcile them on its next run (regenerate if possible; retire otherwise). If you rely on those files and do not want them regenerated or retired, add a `skill_origin: shim` field to their frontmatter.
+
+## Known caveats
+
+- **AC1 literal "≥50 eligible" not force-met:** This PR unblocks the ~36 high/critical entries via the targeted priority path, plus whatever had outcomes that the merge was silently discarding. Ordinary-priority entries must still reach the standard 0.7 confidence + 2-phase-confirmation bar. This is intentional — loosening the gate for all 102 would risk low-quality skill proposals.
+- **`updated_after_generation` staleness not yet reconciled:** `gatherInventory` detects skills whose source knowledge entries were updated after the skill was generated, but `reconcileStaleActiveSkills` does not yet have access to the live knowledge store to act on those. Those skills are surfaced in the inventory report but not automatically regenerated in this release.
+- **Cross-file test isolation (pre-existing):** Running `knowledge-reader.test.ts` alongside other test files in the same Bun process produces spurious failures due to file-scoped `mock.module` leaks. Tests pass when run in isolation (as CI does). This is a pre-existing issue tracked in `scripts/check-cross-contamination.sh`.
+- **Baseline recovery after corruption:** A corrupt `knowledge-counter-baseline.json` is gracefully ignored on read (live events still replay). The corrupt file is overwritten automatically on the next FIFO eviction (when `MAX_EVENT_LOG_ENTRIES` is exceeded and `foldEvictedEventsIntoBaseline` runs).

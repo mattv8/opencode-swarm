@@ -566,24 +566,31 @@ export async function updateRetrievalOutcome(
 			return;
 		}
 
-		// Attribute the phase outcome to each shown entry by appending an immutable
-		// `'outcome'` event (issue #1477). The event log is the SINGLE source of
-		// truth for shown→outcome counters: `recomputeCounters` folds these events
-		// into the per-entry rollup, which `effectiveRetrievalOutcomes` then
-		// surfaces to the maturity gate, search ranking, the curator, and learning
-		// metrics. We intentionally do NOT also mutate `entry.retrieval_outcomes`
-		// here — a second writer would be double-counted by the additive merge and
-		// was the prior root cause of "outcomes written but never read" (the
-		// always-zero event rollup overwrote the entry counts on read). Emitting an
-		// event also works for ids that are no longer present in either store
-		// without a read-modify-write of the knowledge files. Fail-open:
-		// `recordKnowledgeEvent` swallows + warns on I/O failure.
 		const outcome: 'success' | 'failure' = phaseSucceeded
 			? 'success'
 			: 'failure';
 		const evidenceSummary = `${phaseInfo} ${
 			phaseSucceeded ? 'succeeded' : 'failed'
 		} after entry was shown`;
+
+		// Clean up the phase key BEFORE emitting events (F-002 ordering fix).
+		// If transactShownFile succeeds but event emission later fails, the
+		// phase key is already gone so a retry won't re-emit. If transactShownFile
+		// fails (e.g. lockfile timeout) the phase key is still present, events have
+		// NOT been emitted yet, and a retry will try again cleanly — no
+		// double-emission. Fail-open: `recordKnowledgeEvent` swallows + warns on
+		// I/O failure. The outcome events are the SINGLE source of truth for
+		// shown→outcome counters (issue #1477).
+		await transactShownFile(shownFile, (data) => {
+			delete data[phaseInfo];
+			return data;
+		});
+
+		// Attribute the phase outcome to each shown entry by appending an immutable
+		// `'outcome'` event. `recomputeCounters` folds these into the per-entry
+		// rollup surfaced by `effectiveRetrievalOutcomes`. We intentionally do NOT
+		// also mutate `entry.retrieval_outcomes` — a second writer would be
+		// double-counted by the additive merge.
 		for (const id of shownIds) {
 			await _internals.recordKnowledgeEvent(directory, {
 				type: 'outcome',
@@ -593,13 +600,6 @@ export async function updateRetrievalOutcome(
 				evidence_summary: evidenceSummary,
 			});
 		}
-
-		// Clean up shown record atomically (LF-1 fix: transactShownFile prevents
-		// concurrent recordLessonsShown from clobbering an in-progress delete).
-		await transactShownFile(shownFile, (data) => {
-			delete data[phaseInfo];
-			return data;
-		});
 	} catch {
 		warn('[swarm] Knowledge: failed to update retrieval outcomes');
 	}
