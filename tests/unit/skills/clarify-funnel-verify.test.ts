@@ -123,6 +123,10 @@ describe('Task 1.2 — clarification funnel protocol', () => {
 			expect(stage3Section).toContain('APPROVED');
 		});
 
+		it('DROP', () => {
+			expect(stage3Section).toContain('DROP');
+		});
+
 		it('verdict mapping table is present in Stage 3', () => {
 			expect(stage3Section).toContain('SoundingBoardVerdict');
 			expect(stage3Section).toContain('Funnel Action');
@@ -141,21 +145,35 @@ describe('Task 1.2 — clarification funnel protocol', () => {
 	describe('Always-Surface Categories', () => {
 		const content: string = readFileSync(OPENCODE_CLARIFY, 'utf-8');
 
+		// All 13 always-surface categories that MUST be enumerated
+		const expectedCategories = [
+			'Scope boundaries',
+			'Data loss or destructive behavior',
+			'Security/privacy risk tolerance',
+			'Backward compatibility or migration policy',
+			'Breaking changes to existing APIs, contracts, or interfaces',
+			'New dependency additions or version changes',
+			'Deprecation decisions for existing features or APIs',
+			'Cross-platform impact (Windows/macOS/Linux differences)',
+			'Cost/performance tradeoffs',
+			'User-visible behavior and UX choices',
+			'Release/rollout strategy',
+			'Optional QA gates or stricter enforcement modes',
+			'Any choice that changes whether the work is advisory vs hard-blocking',
+		];
+
 		it('section heading exists', () => {
 			expect(content).toContain('Always-Surface Categories');
 		});
 
-		it('lists scope boundaries', () => {
-			expect(content).toContain('Scope boundaries');
-		});
-
-		it('lists data loss or destructive behavior', () => {
-			expect(content).toContain('Data loss or destructive behavior');
-		});
-
-		it('lists security/privacy risk tolerance', () => {
-			expect(content).toContain('Security/privacy risk tolerance');
-		});
+		for (const category of expectedCategories) {
+			it(`lists: "${category}"`, () => {
+				expect(
+					content,
+					`Missing always-surface category: ${category}`,
+				).toContain(category);
+			});
+		}
 	});
 
 	describe('Mirror parity — byte-identical files', () => {
@@ -177,7 +195,7 @@ describe('Task 1.2 — clarification funnel protocol', () => {
 				);
 				const content = readFileSync(skillPath, 'utf-8');
 				expect(content, `${slug} missing overconfidence guard`).toContain(
-					'overconfidence guard',
+					'Overconfidence guard',
 				);
 			}
 		});
@@ -225,7 +243,7 @@ describe('Task 1.2 — clarification funnel protocol', () => {
 			);
 			const content = readFileSync(clarifySpecPath, 'utf-8');
 			expect(content).toContain('Scoped Funnel Protocol');
-			expect(content.toLowerCase()).toContain('overconfidence guard');
+			expect(content).toContain('Overconfidence guard');
 			expect(content).toContain('always-surface protection');
 			expect(content).toContain('SoundingBoardVerdict');
 		});
