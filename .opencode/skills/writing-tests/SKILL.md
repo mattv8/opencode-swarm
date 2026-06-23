@@ -652,7 +652,7 @@ When a SKILL.md (or other agent-facing document) contains an **executable exampl
 1. Locate the executable example in the SKILL.md (tool call, parser output, protocol transcript, etc.).
 2. Construct synthetic data that matches the example's input shape.
 3. Run the actual implementation (parser, tool, protocol handler) on the synthetic data.
-4. Assert field-by-field equality between the actual output and the documented example using deep-equality assertions (`toEqual` / `assert.deepEqual`), not loose string matching.
+4. Assert field-by-field equality between the actual output and the documented example using `bun:test`'s `toEqual` (deep-equality). Do not use loose string matching.
 5. Iterate the example (or fix the implementation) until every field matches with field-level precision.
 
 > **Working example:** `tests/unit/skills/swarm-pr-review-dry-run.test.ts` exercises the `swarm-pr-review` SKILL.md dry-run transcript (lines 866–1050) against the live `parse_lane_candidates` implementation. That test survived four review cycles to align the documentation with runtime output. Drift caught during those cycles included: `invocation_envelope.parse_errors` was `0` in the example but actually `2` (FR-017 both-discriminators detection); `invocation_envelope` was `null` on refusal in the example but actually populated; `sidecar_write_error: undefined` is not valid JSON and had to be replaced with an explicit value; `parse_error_details` field paths and message strings did not match the parser source.
