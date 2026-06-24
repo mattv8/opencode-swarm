@@ -34,6 +34,10 @@ export const REQUIRED_PROJECT_SKILL_SLUGS = [
 	'execute',
 	'phase-wrap',
 	'loop',
+	'writing-tests',
+	'running-tests',
+	'engineering-conventions',
+	'commit-pr',
 ];
 
 const REQUIRED_PACKAGE_FILES = [

@@ -24,6 +24,10 @@ export const BUNDLED_PROJECT_SKILLS = [
 	'execute',
 	'phase-wrap',
 	'loop',
+	'writing-tests',
+	'running-tests',
+	'engineering-conventions',
+	'commit-pr',
 ] as const;
 
 const MAX_SKILL_FILES = 64;

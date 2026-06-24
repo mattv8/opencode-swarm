@@ -392,3 +392,36 @@ test('...', () => {
 - [ ] `bun --smol test tests/unit/config --timeout 60000` passed
 - [ ] `/swarm doctor tools` (or its test equivalent) passed
 ```
+
+## Drift detection across parallel surfaces (issue #1497)
+
+### Why this exists
+
+The repo maintains several "canonical source + mirror" and "source + registry" surfaces that must stay in sync but are edited independently:
+
+- **Skills:** `.opencode/skills/<name>/SKILL.md` (operative, loaded by the OpenCode plugin / architect MODE stubs) and `.claude/skills/<name>/SKILL.md` (Claude-side), plus `.agents/` adapter shims.
+- **Bundled skills:** `BUNDLED_PROJECT_SKILLS` (`src/config/bundled-skills.ts`), `package.json#files`, and the `package-smoke` allowlist must all match each other **and** the actual `.opencode/skills/` directory.
+- **Tools / commands / agents:** implementation, registries, and per-agent maps (invariant 11).
+
+Two failures motivated the automated check:
+
+- **PR #1480 / #1497:** the `.opencode/skills/commit-pr` mirror silently went stale vs the canonical `.claude` version; manual SHA-256 verification caught it only in round-2 review and does not scale.
+- **Issue #1496:** four skills (`writing-tests`, `running-tests`, `engineering-conventions`, `commit-pr`) existed under `.opencode/skills/` but were missing from `BUNDLED_PROJECT_SKILLS` and `package.json#files`, so they never synced to user projects or shipped — because nothing checked the lists against the filesystem.
+
+### How it works
+
+`scripts/drift-check.ts` (run by `.github/workflows/drift-check.yml` on every PR and on `push: main`, or locally via `bun run drift:check`) imports the real modules and compares runtime values rather than grepping source, so it does not produce textual false positives. Detectors:
+
+| Category | What it checks | Source of truth |
+|---|---|---|
+| `skill-mirror` | `.opencode`↔`.claude` byte identity / divergence / adapter / opencode-only; unclassified both-tree pairs | `src/config/skill-mirrors.ts` (shared with `tests/unit/skills/skill-mirrors.test.ts`) |
+| `bundled-skill` | `.opencode/skills/` ⊆ `BUNDLED_PROJECT_SKILLS`; no phantom entries; `package.json#files` coverage | `src/config/bundled-skills.ts`, `package.json` |
+| `tool` | metadata / handler / plugin-object / `TOOL_NAMES` / `AGENT_TOOL_MAP` coherence | reuses `scripts/check-tool-registration.ts` |
+| `command` | `COMMAND_NAME_SET` parity; `subcommandOf` parents exist | `src/commands/registry.ts` |
+| `agent` | `ALL_AGENT_NAMES` ↔ `AGENT_TOOL_MAP`; opt-in maps only reference real agents | `src/config/agent-names.ts`, `src/config/constants.ts` |
+
+### Rules
+
+- It is **soft-warn by default**: GitHub annotations + a sticky PR comment, non-blocking. Set the repo variable `DRIFT_CHECK_ENFORCE=1` for hard-fail.
+- When you add a new skill that exists in **both** `.opencode/skills/` and `.claude/skills/`, classify it in `src/config/skill-mirrors.ts` (`identical` / `divergent` / `adapter` / `opencode-only`), or the check warns until you do.
+- Drift compute is sub-second, so CI caches only dependency install (the real cost), not per-file SHA-256 results.

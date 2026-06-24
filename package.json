@@ -61,6 +61,10 @@
 		".opencode/skills/execute",
 		".opencode/skills/phase-wrap",
 		".opencode/skills/loop",
+		".opencode/skills/writing-tests",
+		".opencode/skills/running-tests",
+		".opencode/skills/engineering-conventions",
+		".opencode/skills/commit-pr",
 		"tests/fixtures/memory-recall",
 		"README.md",
 		"LICENSE"
@@ -71,6 +75,7 @@
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"lint": "biome lint .",
+		"drift:check": "bun run scripts/drift-check.ts",
 		"format": "biome format . --write",
 		"check": "biome check --write .",
 		"dev": "bun run build && opencode",

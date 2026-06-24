@@ -1,0 +1,100 @@
+name: drift-check
+
+# Issue #1497: detect drift across the repo's parallel "canonical + mirror" /
+# "source + registry" surfaces (skills, tools, commands, agents). The detection
+# logic lives in scripts/drift-check.ts, which imports the real modules and
+# compares runtime values (no fragile grep heuristics).
+#
+# Soft-warn by default: this workflow surfaces drift via GitHub annotations and a
+# sticky PR comment but does NOT block merges. Set the repository variable
+# DRIFT_CHECK_ENFORCE=1 (Settings > Secrets and variables > Actions > Variables)
+# to make drift a hard failure.
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  # Cancel stale PR runs when new commits arrive; preserve push:main runs so the
+  # main-branch drift state is never lost mid-check.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          # Full history so future history-aware detectors (e.g. blame-based
+          # mirror provenance) can be added without re-plumbing checkout.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+      # The drift computation itself is sub-second (it imports modules and
+      # compares in-memory values); the only material cost is dependency
+      # install, so that is what we cache — keyed on the lockfile.
+      - name: Cache bun dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run drift check
+        id: drift
+        env:
+          DRIFT_CHECK_ENFORCE: ${{ vars.DRIFT_CHECK_ENFORCE }}
+        run: bun run scripts/drift-check.ts --report drift-report.md
+      - name: Post drift report comment
+        # Only comment on pull requests, and even if the drift step failed under
+        # enforce mode (so the report is always visible). continue-on-error so
+        # fork PRs (which lose pull-requests:write permission) do not cause
+        # the overall workflow to fail — consistent with soft-warn-by-default.
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- drift-check-report -->';
+            let body = marker + '\n';
+            try {
+              body += fs.readFileSync('drift-report.md', 'utf8');
+            } catch {
+              body += '# Drift check report\n\n⚠️ drift-report.md was not produced (the drift step may have errored before writing it).';
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.data.find(
+              (c) => c.user?.type === 'Bot' && c.body?.includes(marker),
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
