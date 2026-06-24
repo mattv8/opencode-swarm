@@ -46,9 +46,10 @@ interface MergeResult {
  * skipping entries that already exist there (exact id or near-duplicate lesson).
  * Reads/writes explicit paths so it does not depend on the active link pointer.
  *
- * The read-dedup-write on the shared store runs inside a single
- * `transactKnowledge` (a locked read-modify-write), so a peer process writing to
- * the shared store mid-merge cannot slip a near-duplicate past the dedup check.
+ * CRITICAL: both local and shared entries are read INSIDE the shared-store lock
+ * to prevent concurrent-merge races. If worktrees A and B link simultaneously,
+ * both must dedupe against the current shared-store state (not stale local reads),
+ * ensuring near-duplicates cannot slip through due to read-time ordering.
  */
 async function mergeLocalKnowledgeIntoLink(
 	localSwarmDir: string,
@@ -58,15 +59,41 @@ async function mergeLocalKnowledgeIntoLink(
 	const sharedPath = path.join(linkDir, 'knowledge.jsonl');
 	if (!existsSync(localPath)) return { merged: 0, skipped: 0 };
 
-	const localEntries = await readKnowledge<KnowledgeEntryBase>(localPath);
-	if (localEntries.length === 0) return { merged: 0, skipped: 0 };
-
 	let merged = 0;
 	let skipped = 0;
+
+	// Use transactFile directly to ensure both reads happen inside the lock.
+	// The mutate callback reads the shared entries; we read local entries
+	// synchronously inside the mutate callback so they're synchronized with
+	// the shared store state at lock-acquisition time.
+	const { readFileSync } = await import('node:fs');
+	let changed = false;
+
 	await transactKnowledge<KnowledgeEntryBase>(sharedPath, (sharedEntries) => {
+		// Read local entries inside the lock to ensure synchronization with shared state.
+		const localEntries: KnowledgeEntryBase[] = [];
+		try {
+			const content = readFileSync(localPath, 'utf-8');
+			for (const line of content.split('\n')) {
+				if (line.trim()) {
+					try {
+						localEntries.push(JSON.parse(line));
+					} catch {
+						// Skip malformed entries
+					}
+				}
+			}
+		} catch {
+			// Local file doesn't exist or can't be read; no-op
+			return null;
+		}
+
+		if (localEntries.length === 0) return null;
+
 		const result = [...sharedEntries];
 		const seenIds = new Set(result.map((e) => e.id));
-		let changed = false;
+		changed = false;
+
 		for (const entry of localEntries) {
 			if (seenIds.has(entry.id)) {
 				skipped++;

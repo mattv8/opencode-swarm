@@ -23,13 +23,20 @@ const MAX_SUGGESTED_SESSIONS = 500;
 const _suggestedSessions = new Set<string>();
 
 function markSuggested(sessionId: string): void {
-	if (
-		!_suggestedSessions.has(sessionId) &&
-		_suggestedSessions.size >= MAX_SUGGESTED_SESSIONS
-	) {
-		const oldest = _suggestedSessions.values().next().value;
-		if (oldest !== undefined) _suggestedSessions.delete(oldest);
+	// Atomic check-evict-add to prevent concurrent races from overshooting MAX_SUGGESTED_SESSIONS.
+	// If already present, no-op (idempotent).
+	if (_suggestedSessions.has(sessionId)) {
+		return;
 	}
+
+	// Only evict if we're at capacity and need to make room for the new entry.
+	if (_suggestedSessions.size >= MAX_SUGGESTED_SESSIONS) {
+		const oldest = _suggestedSessions.values().next().value;
+		if (oldest !== undefined) {
+			_suggestedSessions.delete(oldest);
+		}
+	}
+
 	_suggestedSessions.add(sessionId);
 }
 
