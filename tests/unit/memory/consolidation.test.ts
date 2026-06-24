@@ -198,7 +198,11 @@ function makeDeps(
 	};
 }
 
-const baseConfig = resolveMemoryConfig({ enabled: true });
+// Consolidation is opt-in (default false); enable it explicitly for these tests.
+const baseConfig = resolveMemoryConfig({
+	enabled: true,
+	consolidation: { enabled: true },
+});
 
 describe('parseDistillationOutput', () => {
 	test('parses a fenced json block', () => {
@@ -471,7 +475,7 @@ describe('runConsolidationPass', () => {
 		];
 		const config = resolveMemoryConfig({
 			enabled: true,
-			consolidation: { maxClustersPerPass: 1 },
+			consolidation: { enabled: true, maxClustersPerPass: 1 },
 		});
 		const { deps } = makeDeps(gw, { facts: [] });
 		const r = await runConsolidationPass(

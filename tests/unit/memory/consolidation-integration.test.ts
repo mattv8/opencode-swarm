@@ -14,7 +14,11 @@ import type { MemoryRunLogEvent } from '../../../src/memory/run-log';
 let dir: string;
 let gateway: MemoryGateway;
 
-const config = resolveMemoryConfig({ enabled: true, provider: 'local-jsonl' });
+const config = resolveMemoryConfig({
+	enabled: true,
+	provider: 'local-jsonl',
+	consolidation: { enabled: true },
+});
 
 beforeEach(() => {
 	dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'consol-int-')));

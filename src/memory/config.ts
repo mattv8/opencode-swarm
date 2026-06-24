@@ -95,7 +95,10 @@ export const DEFAULT_IMPORTANCE_CONFIG: ImportanceConfig = {
 };
 
 export const DEFAULT_CONSOLIDATION_CONFIG: ConsolidationConfig = {
-	enabled: true,
+	// Explicit opt-in (lockstep with MemoryConfigSchema in src/config/schema.ts):
+	// consolidation makes LLM calls and auto-applies records, so a user enabling
+	// memory must also explicitly enable consolidation.
+	enabled: false,
 	maxClustersPerPass: 10,
 	jaccardThreshold: 0.3,
 	autoApplyMinConfidence: 0.6,

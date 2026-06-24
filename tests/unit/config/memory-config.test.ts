@@ -52,7 +52,7 @@ describe('MemoryConfigSchema', () => {
 				},
 			},
 			consolidation: {
-				enabled: true,
+				enabled: false,
 				maxClustersPerPass: 10,
 				jaccardThreshold: 0.3,
 				autoApplyMinConfidence: 0.6,
@@ -155,7 +155,8 @@ describe('MemoryConfigSchema', () => {
 		// Sibling defaults inside the same nested object are preserved.
 		expect(parsed.maintenance.importance.wRecency).toBe(0.2);
 		expect(parsed.consolidation.jaccardThreshold).toBe(0.5);
-		expect(parsed.consolidation.enabled).toBe(true);
+		// Opt-in default (MED-04): not enabled unless explicitly set.
+		expect(parsed.consolidation.enabled).toBe(false);
 		expect(parsed.consolidation.decayHalfLifeDays.todo).toBe(14);
 		expect(parsed.consolidation.decayHalfLifeDays.scratch).toBe(7);
 	});
