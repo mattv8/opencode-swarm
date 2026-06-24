@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	ADAPTER_ARCHITECT_MODE_SKILLS,
+	ADDITIONAL_SKILL_MIRROR_CONTRACTS,
 	DIVERGENT_ARCHITECT_MODE_SKILLS,
 	MIRRORED_ARCHITECT_MODE_SKILLS,
 	OPENCODE_ONLY_ARCHITECT_MODE_SKILLS,
@@ -96,6 +97,39 @@ describe('architect mode skill mirrors - regression: prevent mirror drift (F-001
 			expect(existsSync(join(process.cwd(), claudePath))).toBe(false);
 		});
 	}
+
+	describe('ADDITIONAL_SKILL_MIRROR_CONTRACTS (non-architect skill pairs)', () => {
+		for (const contract of ADDITIONAL_SKILL_MIRROR_CONTRACTS) {
+			const opencodePath = join(
+				process.cwd(),
+				`.opencode/skills/${contract.slug}/SKILL.md`,
+			);
+			const claudePath = join(
+				process.cwd(),
+				`.claude/skills/${contract.slug}/SKILL.md`,
+			);
+
+			if (contract.kind === 'identical') {
+				it(`${contract.slug}: .opencode and .claude are byte-identical`, () => {
+					expect(existsSync(opencodePath)).toBe(true);
+					expect(existsSync(claudePath)).toBe(true);
+					expect(readFileSync(claudePath, 'utf-8')).toBe(
+						readFileSync(opencodePath, 'utf-8'),
+					);
+				});
+			} else if (contract.kind === 'divergent') {
+				it(`${contract.slug}: both .opencode and .claude mirrors exist (divergent)`, () => {
+					expect(existsSync(opencodePath)).toBe(true);
+					expect(existsSync(claudePath)).toBe(true);
+				});
+			} else if (contract.kind === 'opencode-only') {
+				it(`${contract.slug}: .opencode exists and no .claude mirror`, () => {
+					expect(existsSync(opencodePath)).toBe(true);
+					expect(existsSync(claudePath)).toBe(false);
+				});
+			}
+		}
+	});
 
 	it('keeps mirrored skill list in sync with architect mode stubs', () => {
 		// Previous coverage used only this hardcoded list, so a new architect
