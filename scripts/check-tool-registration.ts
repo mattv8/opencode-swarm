@@ -23,110 +23,135 @@ import {
 	type ToolName,
 } from '../src/tools/tool-metadata';
 
-const errors: string[] = [];
+/**
+ * Pure collector for tool-registration coherence violations. Returns the list
+ * of human-readable error strings (empty when coherent). Exported so the CI
+ * drift checker (scripts/drift-check.ts, issue #1497) can reuse the exact same
+ * logic without triggering the CLI's `process.exit`.
+ */
+export function collectToolRegistrationErrors(): string[] {
+	const errors: string[] = [];
 
-const metaKeys = Object.keys(TOOL_METADATA);
-const metaKeySet = new Set(metaKeys);
-const handlerKeys = new Set(Object.keys(TOOL_MANIFEST));
+	const metaKeys = Object.keys(TOOL_METADATA);
+	const metaKeySet = new Set(metaKeys);
+	const handlerKeys = new Set(Object.keys(TOOL_MANIFEST));
 
-// 1) Metadata and handler maps must cover exactly the same tools.
-for (const name of metaKeys) {
-	if (!handlerKeys.has(name)) {
-		errors.push(`Tool "${name}" has metadata but no handler in TOOL_MANIFEST.`);
-	}
-}
-for (const name of handlerKeys) {
-	if (!metaKeySet.has(name)) {
-		errors.push(`Tool "${name}" has a handler but no metadata entry.`);
-	}
-}
-
-// 2) The plugin tool object must register exactly the manifest's tools.
-//    swarm_command's handler is dependency-injected at plugin init; we check key
-//    parity, not handler identity, for that key.
-const pluginKeys = new Set(Object.keys(buildPluginToolObject({})));
-for (const name of metaKeys) {
-	if (!pluginKeys.has(name)) {
-		errors.push(`Tool "${name}" is not in the plugin tool object.`);
-	}
-}
-for (const name of pluginKeys) {
-	if (!metaKeySet.has(name)) {
-		errors.push(`Tool "${name}" is in the plugin tool object but has no metadata.`);
-	}
-}
-
-// 3) TOOL_NAMES / TOOL_NAME_SET must mirror the metadata keys exactly.
-if (TOOL_NAMES.length !== metaKeys.length) {
-	errors.push(
-		`TOOL_NAMES has ${TOOL_NAMES.length} entries but TOOL_METADATA has ${metaKeys.length}.`,
-	);
-}
-for (const name of metaKeys) {
-	if (!TOOL_NAME_SET.has(name as ToolName)) {
-		errors.push(`Tool "${name}" is missing from TOOL_NAME_SET.`);
-	}
-}
-
-// 4) Every entry has a non-empty description and a callable resolved handler.
-for (const [name, meta] of Object.entries(TOOL_METADATA)) {
-	if (!meta.description || meta.description.trim().length === 0) {
-		errors.push(`Tool "${name}" has an empty description.`);
-	}
-}
-for (const [name, thunk] of Object.entries(TOOL_MANIFEST)) {
-	if (typeof thunk !== 'function') {
-		errors.push(`Tool "${name}" handler is not a thunk function.`);
-	} else if (typeof (thunk() as { execute?: unknown }).execute !== 'function') {
-		errors.push(`Tool "${name}" handler() has no callable execute.`);
-	}
-}
-
-// 5) AGENT_TOOL_MAP must be the EXACT inversion of TOOL_METADATA.agents — every
-//    assignment present, none stray, none dropped (catches a derivation
-//    regression in either direction, not just "assigned tool exists").
-const expectedAgentTools = new Map<string, Set<string>>();
-for (const [name, meta] of Object.entries(TOOL_METADATA)) {
-	for (const agent of meta.agents) {
-		let set = expectedAgentTools.get(agent);
-		if (!set) {
-			set = new Set();
-			expectedAgentTools.set(agent, set);
-		}
-		set.add(name);
-	}
-}
-for (const [agent, tools] of Object.entries(AGENT_TOOL_MAP)) {
-	const expected = expectedAgentTools.get(agent) ?? new Set<string>();
-	const actual = new Set(tools);
-	for (const tool of actual) {
-		if (!metaKeySet.has(tool)) {
-			errors.push(`Agent "${agent}" references tool "${tool}" which has no metadata.`);
-		}
-		if (!expected.has(tool)) {
+	// 1) Metadata and handler maps must cover exactly the same tools.
+	for (const name of metaKeys) {
+		if (!handlerKeys.has(name)) {
 			errors.push(
-				`Agent "${agent}" lists tool "${tool}" not assigned to it in TOOL_METADATA.agents (stray assignment).`,
+				`Tool "${name}" has metadata but no handler in TOOL_MANIFEST.`,
 			);
 		}
 	}
-	for (const tool of expected) {
-		if (!actual.has(tool)) {
+	for (const name of handlerKeys) {
+		if (!metaKeySet.has(name)) {
+			errors.push(`Tool "${name}" has a handler but no metadata entry.`);
+		}
+	}
+
+	// 2) The plugin tool object must register exactly the manifest's tools.
+	//    swarm_command's handler is dependency-injected at plugin init; we check
+	//    key parity, not handler identity, for that key.
+	const pluginKeys = new Set(Object.keys(buildPluginToolObject({})));
+	for (const name of metaKeys) {
+		if (!pluginKeys.has(name)) {
+			errors.push(`Tool "${name}" is not in the plugin tool object.`);
+		}
+	}
+	for (const name of pluginKeys) {
+		if (!metaKeySet.has(name)) {
 			errors.push(
-				`Tool "${tool}" declares agent "${agent}" in TOOL_METADATA but is missing from AGENT_TOOL_MAP["${agent}"] (dropped assignment).`,
+				`Tool "${name}" is in the plugin tool object but has no metadata.`,
 			);
 		}
 	}
+
+	// 3) TOOL_NAMES / TOOL_NAME_SET must mirror the metadata keys exactly.
+	if (TOOL_NAMES.length !== metaKeys.length) {
+		errors.push(
+			`TOOL_NAMES has ${TOOL_NAMES.length} entries but TOOL_METADATA has ${metaKeys.length}.`,
+		);
+	}
+	for (const name of metaKeys) {
+		if (!TOOL_NAME_SET.has(name as ToolName)) {
+			errors.push(`Tool "${name}" is missing from TOOL_NAME_SET.`);
+		}
+	}
+
+	// 4) Every entry has a non-empty description and a callable resolved handler.
+	for (const [name, meta] of Object.entries(TOOL_METADATA)) {
+		if (!meta.description || meta.description.trim().length === 0) {
+			errors.push(`Tool "${name}" has an empty description.`);
+		}
+	}
+	for (const [name, thunk] of Object.entries(TOOL_MANIFEST)) {
+		if (typeof thunk !== 'function') {
+			errors.push(`Tool "${name}" handler is not a thunk function.`);
+		} else if (
+			typeof (thunk() as { execute?: unknown }).execute !== 'function'
+		) {
+			errors.push(`Tool "${name}" handler() has no callable execute.`);
+		}
+	}
+
+	// 5) AGENT_TOOL_MAP must be the EXACT inversion of TOOL_METADATA.agents —
+	//    every assignment present, none stray, none dropped (catches a derivation
+	//    regression in either direction, not just "assigned tool exists").
+	const expectedAgentTools = new Map<string, Set<string>>();
+	for (const [name, meta] of Object.entries(TOOL_METADATA)) {
+		for (const agent of meta.agents) {
+			let set = expectedAgentTools.get(agent);
+			if (!set) {
+				set = new Set();
+				expectedAgentTools.set(agent, set);
+			}
+			set.add(name);
+		}
+	}
+	for (const [agent, tools] of Object.entries(AGENT_TOOL_MAP)) {
+		const expected = expectedAgentTools.get(agent) ?? new Set<string>();
+		const actual = new Set(tools);
+		for (const tool of actual) {
+			if (!metaKeySet.has(tool)) {
+				errors.push(
+					`Agent "${agent}" references tool "${tool}" which has no metadata.`,
+				);
+			}
+			if (!expected.has(tool)) {
+				errors.push(
+					`Agent "${agent}" lists tool "${tool}" not assigned to it in TOOL_METADATA.agents (stray assignment).`,
+				);
+			}
+		}
+		for (const tool of expected) {
+			if (!actual.has(tool)) {
+				errors.push(
+					`Tool "${tool}" declares agent "${agent}" in TOOL_METADATA but is missing from AGENT_TOOL_MAP["${agent}"] (dropped assignment).`,
+				);
+			}
+		}
+	}
+
+	return errors;
 }
 
-if (errors.length > 0) {
-	console.error('Tool registration check FAILED:\n');
-	for (const e of errors) console.error(`  - ${e}`);
-	console.error(
-		`\n${errors.length} violation(s). Every tool needs a TOOL_METADATA entry (src/tools/tool-metadata.ts) and a handler (src/tools/manifest.ts).`,
+function main(): void {
+	const errors = collectToolRegistrationErrors();
+	if (errors.length > 0) {
+		console.error('Tool registration check FAILED:\n');
+		for (const e of errors) console.error(`  - ${e}`);
+		console.error(
+			`\n${errors.length} violation(s). Every tool needs a TOOL_METADATA entry (src/tools/tool-metadata.ts) and a handler (src/tools/manifest.ts).`,
+		);
+		process.exit(1);
+	}
+
+	console.log(
+		`Tool registration check passed: ${Object.keys(TOOL_METADATA).length} tools, coherent across metadata, handlers, the plugin object, TOOL_NAMES, and AGENT_TOOL_MAP.`,
 	);
-	process.exit(1);
 }
 
-console.log(
-	`Tool registration check passed: ${metaKeys.length} tools, coherent across metadata, handlers, the plugin object, TOOL_NAMES, and AGENT_TOOL_MAP.`,
-);
+if (import.meta.main) {
+	main();
+}

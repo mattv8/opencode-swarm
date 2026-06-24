@@ -35,6 +35,10 @@ const requiredProjectSkillSlugs = [
 	'execute',
 	'phase-wrap',
 	'loop',
+	'writing-tests',
+	'running-tests',
+	'engineering-conventions',
+	'commit-pr',
 ];
 
 const expectedProjectSkillFiles = [
