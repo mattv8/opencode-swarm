@@ -1936,9 +1936,7 @@ describe('applyExplorerFormatSuffix', () => {
 	test('skips when appending would exceed MAX_PROMPT_CHARS', () => {
 		_internals.getGeneratedAgentNames = () => ['swarm_explorer'];
 		const longPrompt = 'x'.repeat(MAX_PROMPT_CHARS - 10);
-		const lanes = [
-			{ id: 'L1', agent: 'swarm_explorer', prompt: longPrompt },
-		];
+		const lanes = [{ id: 'L1', agent: 'swarm_explorer', prompt: longPrompt }];
 		const result = _test_exports.applyExplorerFormatSuffix(lanes);
 		expect(result[0].prompt).toBe(longPrompt);
 	});
