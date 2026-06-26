@@ -543,9 +543,7 @@ rather than preview-text extraction:
    lists. Each reviewer lane receives only the candidates from its assigned
    chunk.
 
-If a lane has `output_degraded: true`, `transcript_incomplete: true`, or no usable `output_ref`, record an explicit
-coverage gap and re-dispatch a narrower lane or mark affected candidates
-UNVERIFIED. Never infer candidate absence from a preview.
+If a lane has `output_degraded: true`, `transcript_incomplete: true`, or no usable `output_ref`, apply the COVERAGE GATE from Phase 3: retry (max 2) with materially different parameters, deploy a verified equivalent alternative, or report INCOMPLETE to the user. Do not mark affected candidates UNVERIFIED to proceed past the gap. Never infer candidate absence from a preview.
 
 **Fallback convention:** If the parser is unavailable, the explorer MAY emit
 `[CANDIDATE]` rows in the lane output as a fallback convention (see the
