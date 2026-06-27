@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { inspectSkill } from '../../../src/services/skill-generator.js';
 import type { SwarmKnowledgeEntry } from '../../../src/hooks/knowledge-types.js';
+import { inspectSkill } from '../../../src/services/skill-generator.js';
 
 describe('skill-inspect-provenance', () => {
 	let tmp: string;
@@ -135,7 +135,11 @@ describe('skill-inspect-provenance', () => {
 
 	it('source_knowledge_status returns correct status for mixed entries', async () => {
 		// Create skill with 3 source IDs
-		await makeSkillDir('mixed-sources', ['id-active', 'id-archived', 'id-deleted']);
+		await makeSkillDir('mixed-sources', [
+			'id-active',
+			'id-archived',
+			'id-deleted',
+		]);
 
 		// Add active and archived entries to knowledge store
 		await appendKnowledgeEntry('id-active', 'active');
@@ -179,7 +183,13 @@ describe('skill-inspect-provenance', () => {
 
 	it('skill without source_knowledge_ids has undefined source_knowledge_status', async () => {
 		// Create skill without source knowledge IDs
-		const skillDir = path.join(tmp, '.opencode', 'skills', 'generated', 'no-sources');
+		const skillDir = path.join(
+			tmp,
+			'.opencode',
+			'skills',
+			'generated',
+			'no-sources',
+		);
 		await fs.promises.mkdir(skillDir, { recursive: true });
 		await fs.promises.writeFile(
 			path.join(skillDir, 'SKILL.md'),

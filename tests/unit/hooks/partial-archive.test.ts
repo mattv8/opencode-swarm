@@ -28,7 +28,10 @@ describe('partial-archive stale.marker', () => {
 	/**
 	 * Helper: create a skill directory with SKILL.md and given source knowledge IDs.
 	 */
-	async function makeSkillDir(slug: string, sourceIds: string[]): Promise<string> {
+	async function makeSkillDir(
+		slug: string,
+		sourceIds: string[],
+	): Promise<string> {
 		const skillDir = path.join(tmp, '.opencode', 'skills', 'generated', slug);
 		await fs.promises.mkdir(skillDir, { recursive: true });
 		const fm = [
@@ -45,7 +48,11 @@ describe('partial-archive stale.marker', () => {
 
 	it('archive 1 of 3 sources creates stale.marker (NOT retire)', async () => {
 		// Create a skill with 3 source knowledge IDs
-		const skillDir = await makeSkillDir('three-source-skill', ['src-a', 'src-b', 'src-c']);
+		const skillDir = await makeSkillDir('three-source-skill', [
+			'src-a',
+			'src-b',
+			'src-c',
+		]);
 
 		// Archive only 1 of the 3 sources
 		const result = await retireOrMarkStale(tmp, skillDir, new Set(['src-a']));
@@ -65,10 +72,18 @@ describe('partial-archive stale.marker', () => {
 
 	it('archive 2 of 3 sources creates stale.marker (NOT retire)', async () => {
 		// Create a skill with 3 source knowledge IDs
-		const skillDir = await makeSkillDir('partial-skill-2', ['id-1', 'id-2', 'id-3']);
+		const skillDir = await makeSkillDir('partial-skill-2', [
+			'id-1',
+			'id-2',
+			'id-3',
+		]);
 
 		// Archive 2 of 3 sources
-		const result = await retireOrMarkStale(tmp, skillDir, new Set(['id-1', 'id-2']));
+		const result = await retireOrMarkStale(
+			tmp,
+			skillDir,
+			new Set(['id-1', 'id-2']),
+		);
 
 		// Should still mark stale, not retire
 		expect(result.action).toBe('stale');
@@ -81,10 +96,18 @@ describe('partial-archive stale.marker', () => {
 
 	it('archive ALL 3 sources creates retired.marker (NOT stale)', async () => {
 		// Create a skill with 3 source knowledge IDs
-		const skillDir = await makeSkillDir('all-archived-skill', ['k1', 'k2', 'k3']);
+		const skillDir = await makeSkillDir('all-archived-skill', [
+			'k1',
+			'k2',
+			'k3',
+		]);
 
 		// Archive ALL 3 sources
-		const result = await retireOrMarkStale(tmp, skillDir, new Set(['k1', 'k2', 'k3']));
+		const result = await retireOrMarkStale(
+			tmp,
+			skillDir,
+			new Set(['k1', 'k2', 'k3']),
+		);
 
 		// Should retire (all sources archived)
 		expect(result.action).toBe('retire');
@@ -100,7 +123,11 @@ describe('partial-archive stale.marker', () => {
 	});
 
 	it('stale.marker reason indicates partial archive', async () => {
-		const skillDir = await makeSkillDir('partial-reason-skill', ['x', 'y', 'z']);
+		const skillDir = await makeSkillDir('partial-reason-skill', [
+			'x',
+			'y',
+			'z',
+		]);
 
 		// Archive only 'x'
 		await retireOrMarkStale(tmp, skillDir, new Set(['x']));
@@ -134,13 +161,41 @@ describe('partial-archive stale.marker', () => {
 		expect(foundBeta.action).toBe('stale');
 
 		// Both should have stale.marker
-		expect(fs.existsSync(path.join(tmp, '.opencode', 'skills', 'generated', 'skill-alpha', 'stale.marker'))).toBe(true);
-		expect(fs.existsSync(path.join(tmp, '.opencode', 'skills', 'generated', 'skill-beta', 'stale.marker'))).toBe(true);
+		expect(
+			fs.existsSync(
+				path.join(
+					tmp,
+					'.opencode',
+					'skills',
+					'generated',
+					'skill-alpha',
+					'stale.marker',
+				),
+			),
+		).toBe(true);
+		expect(
+			fs.existsSync(
+				path.join(
+					tmp,
+					'.opencode',
+					'skills',
+					'generated',
+					'skill-beta',
+					'stale.marker',
+				),
+			),
+		).toBe(true);
 	});
 
 	it('empty source_knowledge_ids array marks stale when any source archived', async () => {
 		// Create a skill with empty source knowledge IDs
-		const skillDir = path.join(tmp, '.opencode', 'skills', 'generated', 'empty-sources');
+		const skillDir = path.join(
+			tmp,
+			'.opencode',
+			'skills',
+			'generated',
+			'empty-sources',
+		);
 		await fs.promises.mkdir(skillDir, { recursive: true });
 		await fs.promises.writeFile(
 			path.join(skillDir, 'SKILL.md'),

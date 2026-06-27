@@ -31,7 +31,10 @@ describe('knowledge-remove stale.marker', () => {
 	/**
 	 * Helper: create a skill directory with SKILL.md and given source knowledge IDs.
 	 */
-	async function makeSkillDir(slug: string, sourceIds: string[]): Promise<string> {
+	async function makeSkillDir(
+		slug: string,
+		sourceIds: string[],
+	): Promise<string> {
 		const skillDir = path.join(tmp, '.opencode', 'skills', 'generated', slug);
 		await fs.promises.mkdir(skillDir, { recursive: true });
 		const fm = [
@@ -70,7 +73,13 @@ describe('knowledge-remove stale.marker', () => {
 
 	it('markSkillStale creates stale.marker in skill directory', async () => {
 		// Create skill directory
-		const skillDir = path.join(tmp, '.opencode', 'skills', 'generated', 'test-skill');
+		const skillDir = path.join(
+			tmp,
+			'.opencode',
+			'skills',
+			'generated',
+			'test-skill',
+		);
 		await fs.promises.mkdir(skillDir, { recursive: true });
 
 		// Call markSkillStale
@@ -124,7 +133,9 @@ describe('knowledge-remove stale.marker', () => {
 	});
 
 	it('stale.marker reason contains context about purge', async () => {
-		const skillDir = await makeSkillDir('purge-reason-skill', ['entry-to-purge']);
+		const skillDir = await makeSkillDir('purge-reason-skill', [
+			'entry-to-purge',
+		]);
 
 		// Simulate what knowledge-remove does: markSkillStale with reason
 		const reason = 'knowledge entry purged';

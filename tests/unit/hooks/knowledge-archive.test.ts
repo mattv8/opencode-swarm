@@ -32,7 +32,10 @@ describe('knowledge-archive stale.marker', () => {
 	/**
 	 * Helper: create a skill directory with SKILL.md and given source knowledge IDs.
 	 */
-	async function makeSkillDir(slug: string, sourceIds: string[]): Promise<string> {
+	async function makeSkillDir(
+		slug: string,
+		sourceIds: string[],
+	): Promise<string> {
 		const skillDir = path.join(tmp, '.opencode', 'skills', 'generated', slug);
 		await fs.promises.mkdir(skillDir, { recursive: true });
 		const fm = [
@@ -60,7 +63,11 @@ describe('knowledge-archive stale.marker', () => {
 		// Call retireOrMarkStale with only src-entry-1 in archived set
 		// Since NOT all sources are archived (only 1 of 1 = all for this single-source skill),
 		// it should mark stale (stale.marker), not retire
-		const result = await retireOrMarkStale(tmp, skillDir, new Set(['src-entry-1']));
+		const result = await retireOrMarkStale(
+			tmp,
+			skillDir,
+			new Set(['src-entry-1']),
+		);
 
 		// With single source and it's archived, allArchived=true → should retire
 		// But let's verify the behavior: if all sources are archived, it retires
@@ -74,7 +81,11 @@ describe('knowledge-archive stale.marker', () => {
 
 	it('archive partial sources creates stale.marker (not retire)', async () => {
 		// Create a skill with 3 source knowledge IDs
-		const skillDir = await makeSkillDir('partial-skill', ['src-a', 'src-b', 'src-c']);
+		const skillDir = await makeSkillDir('partial-skill', [
+			'src-a',
+			'src-b',
+			'src-c',
+		]);
 
 		// Archive only src-a (1 of 3 sources)
 		// This should NOT retire the skill, but mark it stale
@@ -111,7 +122,10 @@ describe('knowledge-archive stale.marker', () => {
 		await makeSkillDir('multi-skill', ['id-1', 'id-2', 'id-3']);
 
 		// Archive only one source
-		const stale = await findStaleSkillsBySourceKnowledgeId(tmp, new Set(['id-1']));
+		const stale = await findStaleSkillsBySourceKnowledgeId(
+			tmp,
+			new Set(['id-1']),
+		);
 		// findStaleSkillsBySourceKnowledgeId finds skills with stale.marker whose ALL sources are archived
 		// Since we didn't create stale.marker yet, this should return empty
 		expect(stale.length).toBe(0);

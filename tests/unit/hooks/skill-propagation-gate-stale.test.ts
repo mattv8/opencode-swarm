@@ -68,7 +68,9 @@ describe('skill-propagation-gate-stale', () => {
 		const available = discoverAvailableSkills(tmp);
 
 		// stale-skill should NOT appear
-		expect(available).not.toContainEqual(expect.stringContaining('stale-skill'));
+		expect(available).not.toContainEqual(
+			expect.stringContaining('stale-skill'),
+		);
 	});
 
 	it('skill with retired.marker is NOT in available skills', async () => {
@@ -79,7 +81,9 @@ describe('skill-propagation-gate-stale', () => {
 		const available = discoverAvailableSkills(tmp);
 
 		// retired-skill should NOT appear
-		expect(available).not.toContainEqual(expect.stringContaining('retired-skill'));
+		expect(available).not.toContainEqual(
+			expect.stringContaining('retired-skill'),
+		);
 	});
 
 	it('skill without stale/retired marker IS in available skills', async () => {

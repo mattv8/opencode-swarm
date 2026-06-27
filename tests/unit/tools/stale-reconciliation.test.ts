@@ -80,9 +80,11 @@ function setupReaddirImpl() {
 }
 
 function setupReadFileImpl() {
-	mockReadFile.mockImplementation(async (filePath: string, encoding: string) => {
-		return realReadFile(filePath, encoding);
-	});
+	mockReadFile.mockImplementation(
+		async (filePath: string, encoding: string) => {
+			return realReadFile(filePath, encoding);
+		},
+	);
 }
 
 function setupExistsSyncImpl() {

@@ -31,12 +31,14 @@ describe('curator-batch', () => {
 	/**
 	 * Helper: write a skill-stale-batch event to the knowledge-events.jsonl file.
 	 */
-	async function writeBatchEvent(events: Array<{
-		skillIds: string[];
-		archivedIds: string[];
-		retiredCount: number;
-		staleCount: number;
-	}>): Promise<void> {
+	async function writeBatchEvent(
+		events: Array<{
+			skillIds: string[];
+			archivedIds: string[];
+			retiredCount: number;
+			staleCount: number;
+		}>,
+	): Promise<void> {
 		const eventsPath = resolveKnowledgeEventsPath(tmp);
 		await fs.promises.mkdir(path.dirname(eventsPath), { recursive: true });
 
@@ -90,11 +92,7 @@ describe('curator-batch', () => {
 			archivedIds: Set<string>;
 		}> = [];
 		const mockRetireOrMarkStale = mock(
-			(
-				directory: string,
-				skillDir: string,
-				archivedIds: Set<string>,
-			) => {
+			(directory: string, skillDir: string, archivedIds: Set<string>) => {
 				retireOrMarkStaleCalls.push({ directory, skillDir, archivedIds });
 				return Promise.resolve({
 					action: 'stale' as const,
@@ -200,9 +198,24 @@ describe('curator-batch', () => {
 	it('multiple batch events with same skillId are deduplicated', async () => {
 		// Write multiple events with the same skill
 		await writeBatchEvent([
-			{ skillIds: ['same-skill'], archivedIds: ['e1'], retiredCount: 0, staleCount: 1 },
-			{ skillIds: ['same-skill'], archivedIds: ['e2'], retiredCount: 0, staleCount: 1 },
-			{ skillIds: ['same-skill'], archivedIds: ['e3'], retiredCount: 0, staleCount: 1 },
+			{
+				skillIds: ['same-skill'],
+				archivedIds: ['e1'],
+				retiredCount: 0,
+				staleCount: 1,
+			},
+			{
+				skillIds: ['same-skill'],
+				archivedIds: ['e2'],
+				retiredCount: 0,
+				staleCount: 1,
+			},
+			{
+				skillIds: ['same-skill'],
+				archivedIds: ['e3'],
+				retiredCount: 0,
+				staleCount: 1,
+			},
 		]);
 
 		// Read events
@@ -232,13 +245,15 @@ describe('curator-batch', () => {
 		// when processing batch events
 
 		// Set up mock
-		const mockFn = mock((directory: string, skillDir: string, archivedIds: Set<string>) => {
-			return Promise.resolve({
-				action: 'stale' as const,
-				slug: path.basename(skillDir),
-				skillDir,
-			});
-		});
+		const mockFn = mock(
+			(directory: string, skillDir: string, archivedIds: Set<string>) => {
+				return Promise.resolve({
+					action: 'stale' as const,
+					slug: path.basename(skillDir),
+					skillDir,
+				});
+			},
+		);
 		_internals.retireOrMarkStale = mockFn;
 
 		// Create skill directories
