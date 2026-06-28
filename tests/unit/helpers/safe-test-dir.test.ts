@@ -102,6 +102,13 @@ describe('safeRmRecursive', () => {
 		expect(() => safeRmRecursive('')).toThrow('non-empty string');
 	});
 
+	it('rejects dirname of empty path before recursive removal', () => {
+		expect(path.dirname('')).toBe('.');
+		expect(() => safeRmRecursive(path.dirname(''))).toThrow(
+			'not under os.tmpdir',
+		);
+	});
+
 	it('rejects paths outside os.tmpdir()', () => {
 		const outside = path.parse(os.tmpdir()).root;
 		expect(() => safeRmRecursive(outside)).toThrow('not under os.tmpdir');

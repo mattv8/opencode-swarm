@@ -287,6 +287,63 @@ describe('knowledge-curator - evidence file curation', () => {
 			expect(lessonsStored).toContain('Use type safety everywhere');
 		});
 
+		test('trigger fires on OpenCode-shaped args.filePath evidence write', async () => {
+			const evidenceContent = JSON.stringify({
+				lessons_learned: ['Curate OpenCode-shaped evidence writes'],
+				project_name: 'test-project',
+				phase_number: 3,
+			});
+			mockReadSwarmFileAsync.mockResolvedValueOnce(evidenceContent);
+
+			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
+
+			await hook(
+				{
+					tool: 'write',
+					args: {
+						filePath: '/project/.swarm/evidence/retro-3/evidence.json',
+					},
+					sessionID: 'sess-opencode-evidence',
+				},
+				{},
+			);
+
+			expect(mockReadSwarmFileAsync).toHaveBeenCalledWith(
+				'/project',
+				'evidence/retro-3/evidence.json',
+			);
+			expect(mockTransactKnowledge).toHaveBeenCalledTimes(1);
+		});
+
+		test('trigger normalizes Windows separators in OpenCode-shaped evidence paths', async () => {
+			const evidenceContent = JSON.stringify({
+				lessons_learned: ['Curate Windows evidence paths'],
+				project_name: 'test-project',
+				phase_number: 3,
+			});
+			mockReadSwarmFileAsync.mockResolvedValueOnce(evidenceContent);
+
+			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
+
+			await hook(
+				{
+					tool: 'edit',
+					args: {
+						filePath:
+							'C:\\work\\project\\.swarm\\evidence\\retro-3\\evidence.json',
+					},
+					sessionID: 'sess-windows-evidence',
+				},
+				{},
+			);
+
+			expect(mockReadSwarmFileAsync).toHaveBeenCalledWith(
+				'/project',
+				'evidence/retro-3/evidence.json',
+			);
+			expect(mockTransactKnowledge).toHaveBeenCalledTimes(1);
+		});
+
 		test('trigger does NOT fire on plan.md write via evidence path (non-regression)', async () => {
 			// Setup: readSwarmFileAsync returns plan content (not evidence)
 			const planContent = `# Test Project
@@ -457,6 +514,41 @@ Phase: 1
 		});
 
 		test('idempotency: same evidence file written with different content (more lessons) → curateAndStoreSwarm called again', async () => {
+			// Equivalent OpenCode paths with different separators share one idempotency key.
+			const evidenceContent = JSON.stringify({
+				lessons_learned: ['Equivalent path idempotency'],
+				project_name: 'test-project',
+				phase_number: 1,
+			});
+			mockReadSwarmFileAsync.mockResolvedValue(evidenceContent);
+
+			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
+
+			await hook(
+				{
+					tool: 'write',
+					args: {
+						filePath: '.swarm/evidence/retro-1/evidence.json',
+					},
+					sessionID: 'sess-normalized',
+				},
+				{},
+			);
+			await hook(
+				{
+					tool: 'write',
+					args: {
+						filePath: '.swarm\\evidence\\retro-1\\evidence.json',
+					},
+					sessionID: 'sess-normalized',
+				},
+				{},
+			);
+
+			expect(mockTransactKnowledge).toHaveBeenCalledTimes(1);
+		});
+
+		test('idempotency reruns evidence curation when content changes', async () => {
 			// First call: evidence with 1 lesson
 			const evidenceContent1 = JSON.stringify({
 				lessons_learned: ['First lesson'],

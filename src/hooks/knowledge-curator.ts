@@ -119,69 +119,81 @@ function hashContent(content: string): string {
 // ============================================================================
 
 /**
- * Check if the input is a write operation targeting the swarm plan file.
- */
-function isWriteToSwarmPlan(input: unknown): boolean {
-	if (typeof input !== 'object' || input === null) return false;
-
-	const record = input as Record<string, unknown>;
-	const toolName = record.toolName as string | undefined;
-
-	if (typeof toolName !== 'string') return false;
-	if (!['write', 'edit', 'apply_patch', 'swarm_apply_patch'].includes(toolName))
-		return false;
-
-	// Normalize path separators (Windows uses backslash)
-	const rawPath = record.path as string | undefined;
-	const rawFile = record.file as string | undefined;
-	const pathField =
-		typeof rawPath === 'string' ? rawPath.replace(/\\/g, '/') : undefined;
-	const fileField =
-		typeof rawFile === 'string' ? rawFile.replace(/\\/g, '/') : undefined;
-
-	if (typeof pathField === 'string' && pathField.includes('.swarm/plan.md')) {
-		return true;
-	}
-	if (typeof fileField === 'string' && fileField.includes('.swarm/plan.md')) {
-		return true;
-	}
-
-	return false;
-}
-
-/**
  * Check if the input is a write operation targeting an evidence file.
  * Exported for testing purposes only.
  */
 export function isWriteToEvidenceFile(input: unknown): boolean {
-	if (typeof input !== 'object' || input === null) return false;
+	const trigger = normalizeWriteTrigger(input);
+	return isEvidencePath(trigger?.filePath);
+}
 
-	const record = input as Record<string, unknown>;
-	const toolName = record.toolName as string | undefined;
+interface WriteTrigger {
+	toolName: string;
+	filePath: string;
+	sessionID: string;
+}
 
-	if (typeof toolName !== 'string') return false;
-	if (!['write', 'edit', 'apply_patch', 'swarm_apply_patch'].includes(toolName))
-		return false;
+const WRITE_TOOLS = new Set([
+	'write',
+	'edit',
+	'apply_patch',
+	'swarm_apply_patch',
+]);
 
-	// Normalize path separators (Windows uses backslash)
-	const rawPath = record.path as string | undefined;
-	const rawFile = record.file as string | undefined;
-	const pathField =
-		typeof rawPath === 'string' ? rawPath.replace(/\\/g, '/') : undefined;
-	const fileField =
-		typeof rawFile === 'string' ? rawFile.replace(/\\/g, '/') : undefined;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
 
-	// Block ALL writes to .swarm/evidence/ (any path under evidence dir)
-	const evidenceRegex = /\.swarm\/+evidence\/+/i;
+function normalizePathField(value: unknown): string | null {
+	return typeof value === 'string' ? value.replace(/\\/g, '/') : null;
+}
 
-	if (typeof pathField === 'string' && evidenceRegex.test(pathField)) {
-		return true;
-	}
-	if (typeof fileField === 'string' && evidenceRegex.test(fileField)) {
-		return true;
-	}
+function firstPathFromRecord(record: Record<string, unknown>): string | null {
+	return (
+		normalizePathField(record.path) ??
+		normalizePathField(record.filePath) ??
+		normalizePathField(record.file)
+	);
+}
 
-	return false;
+function normalizeWriteTrigger(
+	input: unknown,
+	output?: unknown,
+): WriteTrigger | null {
+	if (!isRecord(input)) return null;
+
+	const toolName =
+		typeof input.toolName === 'string'
+			? input.toolName
+			: typeof input.tool === 'string'
+				? input.tool
+				: null;
+	if (!toolName || !WRITE_TOOLS.has(toolName)) return null;
+
+	const inputArgs = isRecord(input.args) ? input.args : null;
+	const outputArgs =
+		isRecord(output) && isRecord(output.args) ? output.args : null;
+	const filePath =
+		firstPathFromRecord(input) ??
+		(inputArgs ? firstPathFromRecord(inputArgs) : null) ??
+		(outputArgs ? firstPathFromRecord(outputArgs) : null);
+	if (!filePath) return null;
+
+	return {
+		toolName,
+		filePath,
+		sessionID:
+			typeof input.sessionID === 'string' ? input.sessionID : 'default',
+	};
+}
+
+function isEvidencePath(filePath: string | undefined | null): boolean {
+	if (!filePath) return false;
+	return /\.swarm\/+evidence\/+/i.test(filePath);
+}
+
+function isPlanPath(filePath: string | undefined | null): boolean {
+	return filePath?.includes('.swarm/plan.md') ?? false;
 }
 
 /**
@@ -1343,45 +1355,30 @@ export function createKnowledgeCuratorHook(
 	config: KnowledgeConfig,
 	options: KnowledgeCuratorHookOptions = {},
 ): (input: unknown, output: unknown) => Promise<void> {
-	const handler = async (input: unknown, _output: unknown): Promise<void> => {
+	const handler = async (input: unknown, output: unknown): Promise<void> => {
 		// Prune stale entries from seenRetroSections
 		pruneSeenRetroSections();
 
 		if (!config.enabled) return;
-		if (!isWriteToSwarmPlan(input) && !isWriteToEvidenceFile(input)) return;
-
-		// Extract sessionID from input (best-effort)
-		const sessionID =
-			((input as Record<string, unknown>)?.sessionID as string | undefined) ??
-			'default';
+		const trigger = normalizeWriteTrigger(input, output);
+		if (!trigger) return;
 
 		// Detect which trigger fired
+		const isPlanTrigger = isPlanPath(trigger.filePath);
 		const isEvidenceTrigger =
-			isWriteToEvidenceFile(input) && !isWriteToSwarmPlan(input);
+			isEvidencePath(trigger.filePath) && !isPlanTrigger;
+		if (!isPlanTrigger && !isEvidenceTrigger) return;
 
 		// Handle evidence file trigger
 		if (isEvidenceTrigger) {
-			// Extract file path from input
-			const record = input as Record<string, unknown>;
-			const rawPath = record.path as string | undefined;
-			const rawFile = record.file as string | undefined;
-			const filePath =
-				typeof rawPath === 'string'
-					? rawPath.replace(/\\/g, '/')
-					: typeof rawFile === 'string'
-						? rawFile.replace(/\\/g, '/')
-						: null;
-
-			if (!filePath) return;
-
 			// Create idempotency key for evidence: evidence:${sessionID}:${filePath}
-			const evidenceKey = `evidence:${sessionID}:${filePath}`;
+			const evidenceKey = `evidence:${trigger.sessionID}:${trigger.filePath}`;
 			const lastSeenEvidence = seenRetroSections.get(evidenceKey);
 
 			// Read and parse the evidence JSON file
 			const evidenceContent = await readSwarmFileAsync(
 				directory,
-				filePath.replace(/^.*\.swarm\//, ''),
+				trigger.filePath.replace(/^.*\.swarm\//, ''),
 			);
 			if (!evidenceContent) return;
 
@@ -1431,7 +1428,7 @@ export function createKnowledgeCuratorHook(
 				directory,
 				config,
 				{
-					llmDelegate: options.llmDelegateFactory?.(sessionID),
+					llmDelegate: options.llmDelegateFactory?.(trigger.sessionID),
 					enrichmentQuota: options.enrichmentQuota,
 				},
 			);
@@ -1446,7 +1443,7 @@ export function createKnowledgeCuratorHook(
 		const section = extractRetrospectiveSection(planContent);
 		if (!section) return;
 
-		if (!checkRetroChanged(sessionID, section)) return;
+		if (!checkRetroChanged(trigger.sessionID, section)) return;
 
 		const allLessons = extractLessonsFromRetro(section);
 		if (allLessons.length === 0) return;
@@ -1478,7 +1475,7 @@ export function createKnowledgeCuratorHook(
 			directory,
 			config,
 			{
-				llmDelegate: options.llmDelegateFactory?.(sessionID),
+				llmDelegate: options.llmDelegateFactory?.(trigger.sessionID),
 				enrichmentQuota: options.enrichmentQuota,
 			},
 		);

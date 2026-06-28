@@ -478,11 +478,175 @@ function scanInvisibleFormatChars(
 	return findings;
 }
 
-function stripMarkdownCodeForUnsafeScan(text: string): string {
-	return text
-		.replace(/```[\s\S]*?```/g, ' ')
-		.replace(/~~~[\s\S]*?~~~/g, ' ')
-		.replace(/`[^`\n]*`/g, ' ');
+interface MarkdownSegment {
+	value: string;
+	isCode: boolean;
+}
+
+type RemovalPatternName =
+	| 'destructive_file_removal'
+	| 'privileged_file_removal';
+
+interface DangerousRemovalCommand {
+	pattern: RemovalPatternName;
+	description: string;
+	match: string;
+}
+
+const CODE_SPAN_OR_FENCE_REGEX = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
+const CODE_WARNING_ONLY_PATTERNS = new Set([
+	'backtick_execution',
+	'shell_substitution',
+	'disk_format',
+	'force_kill',
+	'process_group_kill',
+	'kill_all_processes',
+]);
+
+function splitMarkdownCodeSegments(text: string): MarkdownSegment[] {
+	const segments: MarkdownSegment[] = [];
+	let cursor = 0;
+
+	for (const match of text.matchAll(CODE_SPAN_OR_FENCE_REGEX)) {
+		const index = match.index ?? 0;
+		if (index > cursor) {
+			segments.push({ value: text.slice(cursor, index), isCode: false });
+		}
+		segments.push({ value: match[0], isCode: true });
+		cursor = index + match[0].length;
+	}
+
+	if (cursor < text.length) {
+		segments.push({ value: text.slice(cursor), isCode: false });
+	}
+
+	return segments.length === 0 ? [{ value: text, isCode: false }] : segments;
+}
+
+function getUnsafeInstructionMetadata(name: RemovalPatternName): {
+	description: string;
+	severity: 'error' | 'warning';
+} {
+	const entry = UNSAFE_INSTRUCTION_PATTERNS.find((item) => item.name === name);
+	return {
+		description: entry?.description ?? 'Destructive file removal command',
+		severity: entry?.severity ?? 'error',
+	};
+}
+
+function tokenizeShellArgs(input: string): string[] {
+	const tokens: string[] = [];
+	const tokenRegex =
+		/"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|[^\s]+/g;
+	for (const match of input.matchAll(tokenRegex)) {
+		const token = match[1] ?? match[2] ?? match[0];
+		if (token.length > 0) tokens.push(token);
+	}
+	return tokens;
+}
+
+function rmFlagHasShortOption(token: string, option: string): boolean {
+	return /^-[A-Za-z]+$/.test(token) && token.slice(1).includes(option);
+}
+
+function isRmOption(token: string): boolean {
+	return token.startsWith('-') && token !== '-';
+}
+
+function isDangerousRemovalTarget(rawTarget: string): boolean {
+	const target = rawTarget.replace(/\\/g, '/');
+	return (
+		target === '/' ||
+		target === '/*' ||
+		target === '.' ||
+		target === '..' ||
+		target.startsWith('.swarm') ||
+		target.startsWith('/.swarm') ||
+		target.startsWith('~') ||
+		target.startsWith('$') ||
+		target.startsWith('${') ||
+		target.startsWith('%') ||
+		target.startsWith('/home') ||
+		target.startsWith('/Users') ||
+		target.startsWith('/etc') ||
+		target.startsWith('/bin') ||
+		target.startsWith('/sbin') ||
+		target.startsWith('/usr') ||
+		target.startsWith('/var') ||
+		/^[A-Za-z]:\/(?:Users|Windows)(?:\/|$)/.test(target)
+	);
+}
+
+function findDangerousRemovalCommands(text: string): DangerousRemovalCommand[] {
+	const commands: DangerousRemovalCommand[] = [];
+	const rmCommandRegex = /\b(?<sudo>sudo\s+)?rm\b(?<args>[^\r\n`;&|]*)/gi;
+
+	for (const match of text.matchAll(rmCommandRegex)) {
+		const args = tokenizeShellArgs(match.groups?.args ?? '');
+		const hasRecursive = args.some(
+			(token) =>
+				token === '--recursive' ||
+				token === '-R' ||
+				rmFlagHasShortOption(token, 'r') ||
+				rmFlagHasShortOption(token, 'R'),
+		);
+		const hasForce = args.some(
+			(token) =>
+				token === '--force' ||
+				token === '-f' ||
+				rmFlagHasShortOption(token, 'f'),
+		);
+		if (!hasRecursive || !hasForce) continue;
+
+		if (
+			!args.some(
+				(token) => !isRmOption(token) && isDangerousRemovalTarget(token),
+			)
+		) {
+			continue;
+		}
+
+		const pattern: RemovalPatternName =
+			match.groups?.sudo === undefined
+				? 'destructive_file_removal'
+				: 'privileged_file_removal';
+		commands.push({
+			pattern,
+			description: getUnsafeInstructionMetadata(pattern).description,
+			match: match[0].trim().slice(0, 100),
+		});
+	}
+
+	return commands;
+}
+
+function hasDangerousRemovalTarget(text: string): boolean {
+	return findDangerousRemovalCommands(text).length > 0;
+}
+
+function shouldScanUnsafePatternInSegment(
+	entry: UnsafeInstructionPattern,
+	segment: MarkdownSegment,
+): boolean {
+	if (!segment.isCode) return true;
+	if (CODE_WARNING_ONLY_PATTERNS.has(entry.name)) return false;
+	if (
+		entry.name === 'destructive_file_removal' ||
+		entry.name === 'privileged_file_removal'
+	) {
+		return false;
+	}
+	return true;
+}
+
+function getUnsafeScanSegments(
+	field: string,
+	value: string,
+): MarkdownSegment[] {
+	if (field !== 'skill_body') {
+		return [{ value, isCode: false }];
+	}
+	return splitMarkdownCodeSegments(value);
 }
 
 // ============================================================================
@@ -606,19 +770,37 @@ export function scanUnsafeInstructions(
 
 	for (const { field, value } of fields) {
 		fieldsScanned.push(field);
-		const scanValue =
-			field === 'skill_body' ? stripMarkdownCodeForUnsafeScan(value) : value;
+		const scanSegments = getUnsafeScanSegments(field, value);
+
+		if (field === 'skill_body') {
+			for (const segment of scanSegments) {
+				if (!segment.isCode) continue;
+				for (const command of findDangerousRemovalCommands(segment.value)) {
+					findings.push({
+						pattern: command.pattern,
+						field,
+						description: command.description,
+						severity: 'error',
+						match: command.match,
+					});
+				}
+			}
+		}
 
 		for (const entry of UNSAFE_INSTRUCTION_PATTERNS) {
-			const match = entry.pattern.exec(scanValue);
-			if (match !== null) {
-				findings.push({
-					pattern: entry.name,
-					field,
-					description: entry.description,
-					severity: entry.severity,
-					match: match[0].slice(0, 100),
-				});
+			for (const segment of scanSegments) {
+				if (!shouldScanUnsafePatternInSegment(entry, segment)) continue;
+				const match = entry.pattern.exec(segment.value);
+				if (match !== null) {
+					findings.push({
+						pattern: entry.name,
+						field,
+						description: entry.description,
+						severity: entry.severity,
+						match: match[0].slice(0, 100),
+					});
+					break;
+				}
 			}
 		}
 	}
@@ -872,5 +1054,6 @@ export const _internals = {
 	getTimestamp: (): string => new Date().toISOString(),
 	computeSha256: (content: string): string =>
 		createHash('sha256').update(content).digest('hex'),
-	stripMarkdownCodeForUnsafeScan,
+	splitMarkdownCodeSegments,
+	hasDangerousRemovalTarget,
 };
