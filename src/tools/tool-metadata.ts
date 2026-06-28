@@ -381,6 +381,11 @@ export const TOOL_METADATA = {
 		description: 'detect hidden couplings by analyzing git history',
 		agents: ['architect'],
 	},
+	context_status: {
+		description:
+			'report current context-window headroom for the active session — returns tokens-used, model-limit, usage-percent, threshold-state (none/warn/critical), model name, and provider. Pure read-only: no state mutation, no warning injection. Works whether context_budget.enabled is true or false.',
+		agents: ['architect'],
+	},
 	search: {
 		description:
 			'Workspace-scoped ripgrep-style text search with structured JSON output. Supports literal and regex modes, glob filtering, and result limits. NOTE: This is text search, not structural AST search — use symbols and imports tools for structural queries.',
@@ -482,33 +487,40 @@ export const TOOL_METADATA = {
 	},
 	skill_generate: {
 		description: 'compile knowledge entries into a structured SKILL.md draft',
-		agents: ['architect', 'skill_improver'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: ['skill_improver'],
 	},
 	skill_list: {
 		description: 'list generated skill files and their status',
-		agents: ['architect', 'skill_improver'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: ['skill_improver'],
 	},
 	skill_apply: {
 		description: 'activate a draft skill proposal',
-		agents: ['architect'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: [],
 	},
 	skill_inspect: {
 		description: 'inspect the content and source entries of a skill file',
-		agents: ['architect', 'skill_improver'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: ['skill_improver'],
 	},
 	skill_regenerate: {
 		description:
 			'regenerate an active skill by re-clustering its source knowledge entries and updating the SKILL.md in place',
-		agents: ['architect'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: [],
 	},
 	skill_retire: {
 		description:
 			'retire a generated skill by adding a retired.marker file; retired skills are excluded from scoring and injection',
-		agents: ['architect'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: [],
 	},
 	skill_improve: {
 		description: 'run the skill_improver agent to review and refine skills',
-		agents: ['architect', 'skill_improver'],
+		// 'architect' is intentionally omitted here; added via SKILL_AGENT_TOOL_MAP when skills.enabled === true (FR-004).
+		agents: ['skill_improver'],
 	},
 	spec_write: {
 		description: 'author or update .swarm/spec.md for the current project',

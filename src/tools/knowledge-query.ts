@@ -253,7 +253,7 @@ function formatHiveEntry(entry: HiveKnowledgeEntry): string {
 
 export const knowledge_query: ReturnType<typeof tool> = createSwarmTool({
 	description:
-		'Query swarm knowledge (project-level) or hive knowledge (cross-project) with optional filters. Returns human-readable formatted text output. Use tier "all" to query both swarm and hive knowledge.',
+		'Performs structured filter-based retrieval of swarm knowledge (project-level) or hive knowledge (cross-project). Returns formatted text for human inspection. This is the tool to use when the user knows the CATEGORY, STATUS, or SCORE they want to filter by. For semantic natural-language search, use `knowledge_recall` instead.',
 	args: {
 		tier: z
 			.string()

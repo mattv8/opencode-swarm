@@ -1328,6 +1328,7 @@ Registered on `experimental.chat.system.transform`:
 - Respects `max_injection_tokens` budget (default: 4,000 tokens)
 - Priority ordering: phase → task → decisions → agent context
 - Lower-priority items dropped when budget is exhausted
+- **FR-002 (unified budget):** when `context_budget.unified_injection_tokens` is set, the system-enhancer and knowledge-injector share a single ceiling with proportional split; if one component alone exceeds the ceiling, the other gets zero
 - **v6.0.0**: Injects config override hints for `always_security_review` and `integration_analysis.enabled` when non-default values are detected
 
 ---

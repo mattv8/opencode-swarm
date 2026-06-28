@@ -684,7 +684,8 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 	);
 
 	// v6.17 Knowledge system hooks — fire-and-forget, wrapped in safeHook
-	const knowledgeConfig = KnowledgeConfigSchema.parse(config.knowledge ?? {});
+	const knowledgeConfigBase = config.knowledge ?? {};
+	const knowledgeConfig = KnowledgeConfigSchema.parse(knowledgeConfigBase);
 	const skillImproverConfig = SkillImproverConfigSchema.parse(
 		config.skill_improver ?? {},
 	);
@@ -747,6 +748,7 @@ async function initializeOpenCodeSwarm(ctx: Parameters<Plugin>[0]) {
 				ctx.directory,
 				knowledgeConfig,
 				config.context_budget?.model_limits ?? {},
+				config.context_budget?.unified_injection_tokens,
 			)
 		: undefined;
 

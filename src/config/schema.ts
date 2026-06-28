@@ -282,6 +282,8 @@ export const ContextBudgetConfigSchema = z.object({
 		.record(z.string(), z.number().min(1000))
 		.default({ default: 128000 }),
 	max_injection_tokens: z.number().min(100).max(50000).default(4000),
+	/** Unified ceiling (tokens) for combined system-enhancer + knowledge-injector injection per turn. FR-002. Opt-in: only activates when explicitly configured. */
+	unified_injection_tokens: z.number().min(100).max(50000).optional(),
 	tracked_agents: z.array(z.string()).default(['architect']),
 	scoring: ScoringConfigSchema.optional(),
 	enforce: z.boolean().default(true),
@@ -1037,6 +1039,7 @@ export const KnowledgeConfigSchema = z.object({
 	delegate_max_inject_count: z.number().min(0).max(50).default(8),
 	/** Maximum total chars for the entire injection block (preamble + lessons + run memory + rejected warnings). Default: 2000 */
 	inject_char_budget: z.number().min(200).max(10_000).default(2_000),
+	/** Maximum headroom chars required before knowledge injection activates. */
 	context_budget_threshold: z.number().int().positive().optional(),
 	/** Maximum display chars per lesson at injection time — truncation only, stored lesson is never modified. Default: 120 */
 	max_lesson_display_chars: z.number().min(40).max(280).default(120),
@@ -1434,6 +1437,16 @@ export const SkillImproverConfigSchema = z.object({
 });
 
 export type SkillImproverConfig = z.infer<typeof SkillImproverConfigSchema>;
+
+// Skill-management tools configuration (FR-004 — opt-in gate for the 7 skill_* tools on architect surface).
+// Default false so the tools are absent from the architect tool surface on fresh installs.
+// Separate from `skill_improver.enabled` (which controls the skill_improver agent and its quota).
+export const SkillsConfigSchema = z.object({
+	/** Enable the seven skill-management tools for the architect. Default: false (opt-in). */
+	enabled: z.boolean().default(false),
+});
+
+export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 
 // Spec-writer agent configuration
 export const SpecWriterConfigSchema = z.object({
@@ -2048,6 +2061,11 @@ export const DEFAULT_EXTERNAL_SKILLS_CONFIG: ExternalSkillsConfig = {
 	fetch_timeout_ms: 30000,
 };
 
+/** Default skills configuration (tools gated off). */
+export const DEFAULT_SKILLS_CONFIG: SkillsConfig = {
+	enabled: false,
+};
+
 /**
  * Resolve the external_skills config section, merging user-provided values
  * over defaults.  Returns the default (all-disabled) config when
@@ -2557,6 +2575,11 @@ export const PluginConfigSchema = z.object({
 	// External skills — candidate model, discovery, and quarantine store (FR-001)
 	// Disabled by default; all subsystems are opt-in.
 	external_skills: ExternalSkillsConfigSchema.optional(),
+
+	// Skill-management tools — opt-in gate for the 7 skill_* tools (FR-004).
+	// When false (default), the tools are absent from the architect tool surface.
+	// Tools remain exported/registered/TOOL_NAMES-listed; only the architect map is gated.
+	skills: SkillsConfigSchema.optional(),
 });
 
 export type PluginConfig = z.infer<typeof PluginConfigSchema>;

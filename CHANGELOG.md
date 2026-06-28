@@ -1521,6 +1521,8 @@
 
 ### Features
 
+* **skills:** make skill-management tools (`skill_generate`, `skill_list`, `skill_apply`, `skill_inspect`, `skill_regenerate`, `skill_retire`, `skill_improve`) opt-in via `skills.enabled` config flag (default `false`); tools remain exported and registered, only the architect tool map is gated
+
 * **config:** add `auto_select_architect` option to automatically select swarm architect and disable competing built-in agents ([#887](https://github.com/zaxbysauce/opencode-swarm/issues/887))
 
 ## [7.21.5](https://github.com/zaxbysauce/opencode-swarm/compare/v7.21.4...v7.21.5) (2026-05-17)

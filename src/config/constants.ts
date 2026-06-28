@@ -19,6 +19,8 @@ export {
 	QA_AGENTS,
 } from './agent-names';
 
+// (SKILL_AGENT_TOOL_MAP and SKILL_TOOL_NAMES are defined below and exported at end of file.)
+
 // Opencode built-in native agents — not part of the swarm workflow.
 // These agents are managed entirely by opencode's own permission system and
 // must be exempted from swarm guardrails (authority checks, circuit breaker, etc.).
@@ -293,6 +295,24 @@ export const TURBO_AGENT_TOOL_MAP: Partial<Record<AgentName, ToolName[]>> = {
 	architect: [...TURBO_TOOL_NAMES],
 };
 
+// ---------------------------------------------------------------------------
+// Skill-management tools — opt-in, gated by skills.enabled (FR-004)
+// ---------------------------------------------------------------------------
+
+export const SKILL_TOOL_NAMES = [
+	'skill_generate',
+	'skill_list',
+	'skill_apply',
+	'skill_inspect',
+	'skill_regenerate',
+	'skill_retire',
+	'skill_improve',
+] as const satisfies readonly ToolName[];
+
+export const SKILL_AGENT_TOOL_MAP: Partial<Record<AgentName, ToolName[]>> = {
+	architect: [...SKILL_TOOL_NAMES],
+};
+
 /**
  * Human-readable descriptions for tools shown in the architect Available Tools block.
  * Used to generate the Available Tools section of the architect prompt at construction time.
@@ -499,6 +519,9 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
 		json: 0.35,
 	},
 };
+
+/** Unified injection budget is now configured only at the top level (context_budget.unified_injection_tokens). */
+export const KNOWLEDGE_UNIFIED_INJECTION_TOKENS_DEFAULT: number | null = null;
 
 /**
  * Resolve scoring configuration by deep-merging user config with defaults.

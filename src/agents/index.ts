@@ -14,6 +14,7 @@ import {
 	EXTERNAL_SKILL_AGENT_TOOL_MAP,
 	GENERAL_COUNCIL_AGENT_TOOL_MAP,
 	MEMORY_AGENT_TOOL_MAP,
+	SKILL_AGENT_TOOL_MAP,
 	TURBO_AGENT_TOOL_MAP,
 } from '../config/constants';
 import { stripKnownSwarmPrefix } from '../config/schema';
@@ -409,6 +410,7 @@ function createSwarmAgents(
 			pluginConfig?.design_docs?.enabled === true,
 			pluginConfig?.external_skills?.curation_enabled === true,
 			pluginConfig?.turbo !== undefined,
+			pluginConfig?.skills?.enabled === true,
 		);
 		architect.name = prefixName('architect');
 
@@ -1174,6 +1176,33 @@ export function getAgentConfigs(
 					allowedTools = Array.from(
 						new Set([...(allowedTools ?? []), ...turboTools]),
 					);
+				}
+			}
+
+			// Feature-gate: skill-management tools (FR-004) — gated by skills.enabled
+			// (separate from skill_improver.enabled which controls the agent/quota).
+			//
+			// AUTHORITATIVE GATE: The skills.enabled check takes precedence over
+			// tool_filter.overrides. Skill tools MUST NOT appear when skills.enabled
+			// is not true, even if tool_filter.overrides.architect explicitly lists
+			// them (e.g. overrides: { architect: ['skill_generate', ...] }).
+			// We strip first (to close override bypass), then add only when enabled.
+			{
+				const skillTools =
+					SKILL_AGENT_TOOL_MAP[
+						baseAgentName as keyof typeof SKILL_AGENT_TOOL_MAP
+					] ?? [];
+				if (skillTools.length > 0 && allowedTools) {
+					if (config?.skills?.enabled === true) {
+						allowedTools = Array.from(
+							new Set([...allowedTools, ...skillTools]),
+						);
+					} else {
+						// Strip any skill tools that arrived via override or base map.
+						// This is the enforcement point for the FR-004 gate.
+						const skillToolsSet = new Set<string>(skillTools);
+						allowedTools = allowedTools.filter((t) => !skillToolsSet.has(t));
+					}
 				}
 			}
 

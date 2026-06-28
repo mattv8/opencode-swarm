@@ -2,47 +2,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Mock the hooks/utils module before importing the tool
-vi.mock('../hooks/utils', () => ({
-	validateSwarmPath: vi.fn((directory: string, relativePath: string) => {
-		// Simulate successful validation
-		return path.join(directory, relativePath);
-	}),
-}));
-
-// We need to mock createSwarmTool since it imports from @opencode-ai/plugin
-vi.mock('./create-tool', () => ({
-	createSwarmTool: vi.fn((def) => def),
-}));
-
-vi.mock('@opencode-ai/plugin/tool', () => ({
-	tool: {
-		schema: {
-			number: () => ({
-				int: () => ({
-					min: () => ({
-						describe: () => ({}),
-					}),
-				}),
-				optional: () => ({
-					describe: () => ({}),
-				}),
-			}),
-			string: () => ({
-				optional: () => ({
-					describe: () => ({}),
-				}),
-				describe: () => ({}),
-			}),
-			enum: () => ({
-				describe: () => ({}),
-			}),
-		},
-	},
-}));
-
-// Import the module AFTER mocking
-const { executeWriteMutationEvidence } = await import(
+// Import the module with NO top-level vi.mock on '../hooks/utils' (prevents
+// cross-file export leaks for readSwarmFileAsync etc. per AGENTS.md invariant 7).
+// We use the real validateSwarmPath, so evidence is written under .swarm/.
+const { executeWriteMutationEvidence, write_mutation_evidence } = await import(
 	'./write-mutation-evidence'
 );
 
@@ -55,8 +18,8 @@ describe('write-mutation-evidence', () => {
 
 	beforeEach(async () => {
 		vi.clearAllMocks();
-		// Create test directory
-		await fs.promises.mkdir(testDir, { recursive: true });
+		// Create test directory + .swarm (real validateSwarmPath expects/uses .swarm)
+		await fs.promises.mkdir(path.join(testDir, '.swarm'), { recursive: true });
 	});
 
 	afterEach(async () => {
@@ -84,9 +47,10 @@ describe('write-mutation-evidence', () => {
 		expect(parsed.phase).toBe(1);
 		expect(parsed.verdict).toBe('skip');
 
-		// Verify the file was written with defaults
+		// Verify the file was written with defaults (real validateSwarmPath writes under .swarm/)
 		const evidencePath = path.join(
 			testDir,
+			'.swarm',
 			'evidence',
 			'1',
 			'mutation-gate.json',
@@ -120,9 +84,10 @@ describe('write-mutation-evidence', () => {
 		expect(parsed.phase).toBe(2);
 		expect(parsed.verdict).toBe('pass');
 
-		// Verify the file was written with correct rates
+		// Verify the file was written with correct rates (real validateSwarmPath writes under .swarm/)
 		const evidencePath = path.join(
 			testDir,
+			'.swarm',
 			'evidence',
 			'2',
 			'mutation-gate.json',
@@ -154,9 +119,10 @@ describe('write-mutation-evidence', () => {
 		expect(parsed.phase).toBe(3);
 		expect(parsed.verdict).toBe('fail');
 
-		// Verify the file was written with correct rates
+		// Verify the file was written with correct rates (real validateSwarmPath writes under .swarm/)
 		const evidencePath = path.join(
 			testDir,
+			'.swarm',
 			'evidence',
 			'3',
 			'mutation-gate.json',
@@ -210,6 +176,7 @@ describe('write-mutation-evidence', () => {
 
 		const evidencePath = path.join(
 			testDir,
+			'.swarm',
 			'evidence',
 			'5',
 			'mutation-gate.json',
@@ -301,6 +268,7 @@ describe('write-mutation-evidence', () => {
 
 		const evidencePath = path.join(
 			testDir,
+			'.swarm',
 			'evidence',
 			'10',
 			'mutation-gate.json',
@@ -309,5 +277,47 @@ describe('write-mutation-evidence', () => {
 			await fs.promises.readFile(evidencePath, 'utf-8'),
 		);
 		expect(content.entries[0].survivedMutants).toBe('["mutant1", "mutant2"]');
+	});
+});
+
+describe('write_mutation_evidence delegates to shared normalize-verdict module', () => {
+	const testDir = path.join(
+		process.env.TEMP ?? '/tmp',
+		'mutation-seam-test',
+		String(Date.now()),
+	);
+
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		await fs.promises.mkdir(path.join(testDir, '.swarm'), { recursive: true });
+	});
+
+	afterEach(async () => {
+		try {
+			await fs.promises.rm(testDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
+		vi.restoreAllMocks();
+	});
+
+	test('uses _internals.normalizeVerdict4 from shared module', async () => {
+		const { _internals } = await import('./write-mutation-evidence');
+
+		const original = _internals.normalizeVerdict4;
+		let callCount = 0;
+		_internals.normalizeVerdict4 = (verdict: string) => {
+			callCount++;
+			return original(verdict);
+		};
+
+		const out = await executeWriteMutationEvidence(
+			{ phase: 1, verdict: 'PASS', summary: 'Seam test' },
+			testDir,
+		);
+		expect(JSON.parse(out).success).toBe(true);
+		expect(callCount).toBe(1);
+
+		_internals.normalizeVerdict4 = original;
 	});
 });

@@ -531,3 +531,45 @@ describe('write_drift_evidence provenance write-through', () => {
 		expect(entry.provenance.captured_at).toBeDefined();
 	});
 });
+
+describe('write_drift_evidence delegates to shared normalize-verdict module', () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = realpathSync(
+			mkdtempSync(path.join(os.tmpdir(), 'swarm-dve-seam-')),
+		);
+		mkdirSync(path.join(tempDir, '.swarm'), { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	test('uses _internals.normalizeVerdict2 from shared module', async () => {
+		const { _internals } = await import(
+			'../../../src/tools/write-drift-evidence'
+		);
+
+		const original = _internals.normalizeVerdict2;
+		let callCount = 0;
+		_internals.normalizeVerdict2 = (verdict: string) => {
+			callCount++;
+			return original(verdict);
+		};
+
+		const out = await (
+			write_drift_evidence.execute as unknown as (
+				args: unknown,
+				ctx: { directory: string },
+			) => Promise<string>
+		)(
+			{ phase: 1, verdict: 'APPROVED', summary: 'Seam test' },
+			{ directory: tempDir },
+		);
+		expect(JSON.parse(out).success).toBe(true);
+		expect(callCount).toBe(1);
+
+		_internals.normalizeVerdict2 = original;
+	});
+});

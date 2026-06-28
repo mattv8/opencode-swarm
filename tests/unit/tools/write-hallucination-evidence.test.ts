@@ -7,7 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { executeWriteHallucinationEvidence } from '../../../src/tools/write-hallucination-evidence';
+import {
+	executeWriteHallucinationEvidence,
+	write_hallucination_evidence,
+} from '../../../src/tools/write-hallucination-evidence';
 
 describe('executeWriteHallucinationEvidence', () => {
 	let tempDir: string;
@@ -139,5 +142,51 @@ describe('executeWriteHallucinationEvidence', () => {
 		expect(JSON.parse(result).success).toBe(true);
 		const dir = path.join(tempDir, '.swarm', 'evidence', '5');
 		expect(fs.existsSync(dir)).toBe(true);
+	});
+});
+
+describe('write_hallucination_evidence delegates to shared normalize-verdict module', () => {
+	let tempDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.promises.mkdtemp(
+			path.join(os.tmpdir(), 'hallucination-seam-test-'),
+		);
+		await fs.promises.mkdir(path.join(tempDir, '.swarm'), { recursive: true });
+	});
+
+	afterEach(async () => {
+		try {
+			await fs.promises.rm(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
+	});
+
+	test('uses _internals.normalizeVerdict2 from shared module', async () => {
+		const { _internals } = await import(
+			'../../../src/tools/write-hallucination-evidence'
+		);
+
+		const original = _internals.normalizeVerdict2;
+		let callCount = 0;
+		_internals.normalizeVerdict2 = (verdict: string) => {
+			callCount++;
+			return original(verdict);
+		};
+
+		const out = await (
+			write_hallucination_evidence.execute as unknown as (
+				args: unknown,
+				ctx: { directory: string },
+			) => Promise<string>
+		)(
+			{ phase: 1, verdict: 'APPROVED', summary: 'Seam test' },
+			{ directory: tempDir },
+		);
+		expect(JSON.parse(out).success).toBe(true);
+		expect(callCount).toBe(1);
+
+		_internals.normalizeVerdict2 = original;
 	});
 });

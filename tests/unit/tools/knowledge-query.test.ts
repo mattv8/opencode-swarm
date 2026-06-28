@@ -97,9 +97,10 @@ describe('knowledge-query tool verification tests', () => {
 			expect(typeof knowledge_query.execute).toBe('function');
 		});
 
-		it('Description mentions tier and hive', () => {
-			expect(knowledge_query.description.toLowerCase()).toContain('tier');
-			expect(knowledge_query.description.toLowerCase()).toContain('hive');
+		it('Description mentions swarm and hive knowledge tiers', () => {
+			const desc = knowledge_query.description.toLowerCase();
+			expect(desc).toContain('swarm');
+			expect(desc).toContain('hive');
 		});
 
 		it('Description mentions formatted output', () => {

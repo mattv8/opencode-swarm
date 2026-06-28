@@ -561,6 +561,8 @@ The Context Budget Guard monitors how much context Swarm is injecting into the c
 
 To disable entirely, set `context_budget.enabled: false` in your swarm config.
 
+**On-demand status check:** architects can invoke the `context_status` tool at any time to read current context-window headroom (tokens used, model limit, usage percent, threshold state, model ID, provider) without triggering advisory warnings or mutating state. Works even when `context_budget.enabled` is false.
+
 ---
 
 ### Skill Propagation
@@ -614,7 +616,9 @@ Routing skills are merged with scored recommendations, with explicitly routed sk
 
 ### Skill Lifecycle Management
 
-Swarm provides tools for managing generated skill lifecycles:
+Seven skill-management tools (`skill_generate`, `skill_list`, `skill_apply`, `skill_inspect`, `skill_regenerate`, `skill_retire`, `skill_improve`) are **opt-in** via the `skills.enabled` config flag (default `false`). With the flag off, the architect does not see them; with the flag on, they reappear. Tools remain exported and registered — only the merged architect tool map is gated.
+
+ Swarm provides tools for managing generated skill lifecycles:
 
 - **`skill_retire`** — Retires an active generated skill by creating a `retired.marker` file in its directory. Retired skills are excluded from discovery, scoring, and injection. The SKILL.md file is preserved for auditability. Use `skill_retire(slug, reason?)` to retire a skill, or pass a reason for tracking purposes.
 
@@ -699,6 +703,7 @@ Every candidate passes a 3-gate pipeline before entering quarantine:
 | `context_budget.tracked_agents` | string[] | `['architect']` | Agents to track for context budget warnings |
 | `context_budget.enforce_on_agent_switch` | boolean | `true` | Enforce budget limits when switching agents |
 | `context_budget.model_limits` | record | `{ default: 128000 }` | Per-model token limits (model name -> max tokens) |
+| `context_budget.unified_injection_tokens` | number | `undefined` | Opt-in unified ceiling (tokens) for combined system-enhancer + knowledge-injector injection per turn. When set, both hooks share this budget with proportional split |
 | `context_budget.tool_output_mask_threshold` | number | `2000` | Threshold for masking tool outputs (chars) |
 | `context_budget.scoring.enabled` | boolean | `false` | Enable context scoring/ranking |
 | `context_budget.scoring.max_candidates` | number | `100` | Maximum items to score (10-500) |

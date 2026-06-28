@@ -9,6 +9,10 @@
 import { createHash } from 'node:crypto';
 import { stripKnownSwarmPrefix } from '../config/schema.js';
 import { getCurrentTaskId, loadPlan } from '../plan/manager.js';
+import {
+	allocateInjectionBudget,
+	getSystemEnhancerDemand,
+} from '../services/injection-budget.js';
 import { getRunMemorySummary } from '../services/run-memory.js';
 import { clearCriticalShownIds, setCriticalShownIds } from '../state.js';
 import { warn } from '../utils/logger.js';
@@ -584,6 +588,7 @@ export function createKnowledgeInjectorHook(
 	directory: string,
 	config: KnowledgeConfig,
 	modelLimitOverrides: Record<string, number> = {},
+	unifiedInjectionTokens: number | undefined = undefined,
 ): (
 	input: Record<string, never>,
 	output: { messages?: MessageWithParts[] },
@@ -645,7 +650,7 @@ export function createKnowledgeInjectorHook(
 
 			// Three-regime injection budget (maps to BACM high/moderate/low budget regimes)
 			const maxInjectChars = config.inject_char_budget ?? 2_000;
-			const effectiveBudget =
+			let effectiveBudget =
 				headroomChars >= MODEL_LIMIT_CHARS * 0.6
 					? maxInjectChars // high: >60% remaining — full budget
 					: headroomChars >= MODEL_LIMIT_CHARS * 0.2
@@ -658,6 +663,18 @@ export function createKnowledgeInjectorHook(
 			const systemMsg = output.messages.find((m) => m.info?.role === 'system');
 			const agentName = systemMsg?.info?.agent;
 			if (!agentName) return;
+
+			// FR-002: unified injection budget — draw from shared ceiling so
+			// system-enhancer + knowledge-injector combined stay within budget.
+			if (unifiedInjectionTokens !== undefined) {
+				const sessionID = systemMsg?.info?.sessionID;
+				const seDemand = sessionID ? getSystemEnhancerDemand(sessionID) : 0;
+				const allocation = allocateInjectionBudget(seDemand, effectiveBudget, {
+					totalBudgetTokens: unifiedInjectionTokens,
+				});
+				effectiveBudget = Math.floor(allocation.knowledgeInjectorTokens / 0.33);
+			}
+
 			if (isDelegatedAgent(agentName)) {
 				await injectForDelegateIntoMessages(
 					directory,

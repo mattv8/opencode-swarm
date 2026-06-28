@@ -9,6 +9,11 @@ import path from 'node:path';
 import type { ToolDefinition } from '@opencode-ai/plugin/tool';
 import { z } from 'zod';
 import { lockProfile } from '../db/qa-gate-profile.js';
+import {
+	isAcceptedVerdict2,
+	normalizeVerdict2,
+	VERDICT_SET_2,
+} from '../evidence/normalize-verdict';
 import { validateSwarmPath } from '../hooks/utils';
 import { takeSnapshotEvent } from '../plan/ledger';
 import { loadPlanJsonOnly } from '../plan/manager';
@@ -31,24 +36,6 @@ export interface WriteDriftEvidenceArgs {
 	provenanceAgentName?: string;
 	/** Session ID of the agent that produced this evidence (optional provenance) */
 	provenanceSessionId?: string;
-}
-
-/**
- * Normalize verdict string to lowercase format
- * @param verdict - Raw verdict from caller
- * @returns Normalized verdict: 'approved' | 'rejected'
- */
-function normalizeVerdict(verdict: string): 'approved' | 'rejected' {
-	switch (verdict) {
-		case 'APPROVED':
-			return 'approved';
-		case 'NEEDS_REVISION':
-			return 'rejected';
-		default:
-			throw new Error(
-				`Invalid verdict: must be 'APPROVED' or 'NEEDS_REVISION', got '${verdict}'`,
-			);
-	}
 }
 
 /**
@@ -76,9 +63,8 @@ export async function executeWriteDriftEvidence(
 		);
 	}
 
-	// Validate verdict is one of the allowed values
-	const validVerdicts = ['APPROVED', 'NEEDS_REVISION'] as const;
-	if (!validVerdicts.includes(args.verdict)) {
+	// Validate verdict is one of the allowed values (derived from shared module)
+	if (!isAcceptedVerdict2(args.verdict)) {
 		return JSON.stringify(
 			{
 				success: false,
@@ -105,7 +91,7 @@ export async function executeWriteDriftEvidence(
 	}
 
 	// Normalize verdict
-	const normalizedVerdict = normalizeVerdict(args.verdict);
+	const normalizedVerdict = _internals.normalizeVerdict2(args.verdict);
 
 	// Build provenance if provided
 	const provenance =
@@ -265,6 +251,17 @@ export async function executeWriteDriftEvidence(
 }
 
 /**
+ * Dependency-injection seam for testing. Tests can temporarily replace these
+ * to verify that this writer delegates to the shared normalize-verdict module.
+ * Restore each entry in afterEach via the saved original reference.
+ */
+export const _internals = {
+	normalizeVerdict2,
+	VERDICT_SET_2,
+	isAcceptedVerdict2,
+};
+
+/**
  * Tool definition for write_drift_evidence
  */
 export const write_drift_evidence: ToolDefinition = createSwarmTool({
@@ -280,7 +277,7 @@ export const write_drift_evidence: ToolDefinition = createSwarmTool({
 			.min(1)
 			.describe('The phase number for the drift verification (e.g., 1, 2, 3)'),
 		verdict: z
-			.enum(['APPROVED', 'NEEDS_REVISION'])
+			.enum(VERDICT_SET_2 as [string, ...string[]])
 			.describe(
 				"Verdict of the drift verification: 'APPROVED' or 'NEEDS_REVISION'",
 			),

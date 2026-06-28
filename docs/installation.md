@@ -522,6 +522,7 @@ Context budget controls (full schema in `src/config/schema.ts`):
 | `recent_window` | number | `10` | How many recent turns are considered for priority‑based pruning |
 | `enforce_on_agent_switch` | boolean | `true` | Enforce a hard context reset when the active agent changes (e.g., from `explorer` to `coder`) |
 | `tool_output_mask_threshold` | number | `2000` | Minimum token count at which tool output is masked/truncated to stay within the budget |
+| `unified_injection_tokens` | number | `undefined` | Opt-in unified ceiling (tokens) for combined system-enhancer + knowledge-injector injection per turn. When set, both hooks share this budget with proportional split |
 
 ```json
 {

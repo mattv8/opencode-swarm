@@ -14,6 +14,7 @@ import {
 	ORCHESTRATOR_NAME,
 	PIPELINE_AGENTS,
 	QA_AGENTS,
+	SKILL_AGENT_TOOL_MAP,
 	TURBO_AGENT_TOOL_MAP,
 } from '../../../src/config/constants';
 import { TOOL_NAMES } from '../../../src/tools/tool-names';
@@ -191,6 +192,9 @@ describe('constants.ts', () => {
 				for (const tool of tools) assignedTools.add(tool);
 			}
 			for (const tools of Object.values(TURBO_AGENT_TOOL_MAP)) {
+				for (const tool of tools) assignedTools.add(tool);
+			}
+			for (const tools of Object.values(SKILL_AGENT_TOOL_MAP)) {
 				for (const tool of tools) assignedTools.add(tool);
 			}
 			for (const tool of TOOL_NAMES) {
