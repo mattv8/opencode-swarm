@@ -301,6 +301,72 @@ describe('knowledge-curator', () => {
 			expect(transactKnowledge).toHaveBeenCalledTimes(1);
 		});
 
+		test('hook fires on OpenCode-shaped write args.filePath to .swarm/plan.md', async () => {
+			const planContent = makePlanContent(['Normalize OpenCode write inputs']);
+			mockReadSwarmFileAsync.mockResolvedValueOnce(planContent);
+
+			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
+
+			await hook(
+				{
+					tool: 'write',
+					args: {
+						filePath: '/project/.swarm/plan.md',
+					},
+					sessionID: 'sess-opencode',
+				},
+				{},
+			);
+
+			expect(mockReadSwarmFileAsync).toHaveBeenCalledWith(
+				'/project',
+				'plan.md',
+			);
+			expect(transactKnowledge).toHaveBeenCalledTimes(1);
+		});
+
+		test('hook normalizes Windows separators in OpenCode-shaped plan paths', async () => {
+			const planContent = makePlanContent(['Normalize Windows plan paths']);
+			mockReadSwarmFileAsync.mockResolvedValueOnce(planContent);
+
+			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
+
+			await hook(
+				{
+					tool: 'edit',
+					args: {
+						filePath: 'C:\\work\\project\\.swarm\\plan.md',
+					},
+					sessionID: 'sess-windows-plan',
+				},
+				{},
+			);
+
+			expect(mockReadSwarmFileAsync).toHaveBeenCalledWith(
+				'/project',
+				'plan.md',
+			);
+			expect(transactKnowledge).toHaveBeenCalledTimes(1);
+		});
+
+		test('hook ignores OpenCode-shaped writes with non-string paths', async () => {
+			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
+
+			await hook(
+				{
+					tool: 'write',
+					args: {
+						filePath: 42,
+					},
+					sessionID: 'sess-non-string',
+				},
+				{},
+			);
+
+			expect(mockReadSwarmFileAsync).not.toHaveBeenCalled();
+			expect(transactKnowledge).not.toHaveBeenCalled();
+		});
+
 		test('hook skips writes to other files (e.g. README.md)', async () => {
 			const hook = createKnowledgeCuratorHook('/project', defaultConfig);
 
@@ -420,6 +486,54 @@ describe('knowledge-curator', () => {
 						toolName: 'write',
 						path: '/project/.swarm/plan.md',
 						sessionID: 'sess-quota',
+					},
+					{},
+				);
+
+				expect(factory).toHaveBeenCalledTimes(1);
+				expect(curateSpy).toHaveBeenCalledTimes(1);
+				const options = curateSpy.mock.calls[0][5];
+				expect(options).toEqual({
+					llmDelegate: delegate,
+					enrichmentQuota: quota,
+				});
+			} finally {
+				_internals.curateAndStoreSwarm = realCurate;
+			}
+		});
+
+		test('hook passes delegate and quota for OpenCode-shaped write inputs', async () => {
+			const planContent = makePlanContent(['Preserve delegate wiring']);
+			mockReadSwarmFileAsync.mockResolvedValueOnce(planContent);
+			const delegate = mock(async () => '{}');
+			const factory = mock((sessionID: string) => {
+				expect(sessionID).toBe('sess-opencode-quota');
+				return delegate;
+			});
+			const quota = { maxCalls: 3, window: 'local' as const };
+			const realCurate = _internals.curateAndStoreSwarm;
+			const curateSpy = mock(async () => ({
+				stored: 0,
+				reinforced: 0,
+				skipped: 0,
+				rejected: 0,
+				quarantined: 0,
+			}));
+			_internals.curateAndStoreSwarm =
+				curateSpy as typeof _internals.curateAndStoreSwarm;
+
+			try {
+				const hook = createKnowledgeCuratorHook('/project', defaultConfig, {
+					llmDelegateFactory: factory,
+					enrichmentQuota: quota,
+				});
+				await hook(
+					{
+						tool: 'apply_patch',
+						args: {
+							filePath: '/project/.swarm/plan.md',
+						},
+						sessionID: 'sess-opencode-quota',
 					},
 					{},
 				);
