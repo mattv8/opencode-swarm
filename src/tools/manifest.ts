@@ -33,6 +33,7 @@ import { checkpoint } from './checkpoint';
 import { co_change_analyzer } from './co-change-analyzer';
 import { completion_verify } from './completion-verify';
 import { complexity_hotspots } from './complexity-hotspots';
+import { context_status } from './context-status';
 import { submit_council_verdicts } from './convene-council';
 import { convene_general_council } from './convene-general-council';
 import { curator_analyze } from './curator-analyze';
@@ -197,6 +198,7 @@ export const TOOL_MANIFEST = defineHandlers({
 	knowledge_recall: () => knowledge_recall,
 	knowledge_remove: () => knowledge_remove,
 	co_change_analyzer: () => co_change_analyzer,
+	context_status: () => context_status,
 	search: () => search,
 	ast_grep: () => ast_grep,
 	actionlint_scan: () => actionlint_scan,

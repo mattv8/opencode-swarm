@@ -13,6 +13,7 @@ export { co_change_analyzer } from './co-change-analyzer';
 export { completion_verify } from './completion-verify';
 // v6.5
 export { complexity_hotspots } from './complexity-hotspots';
+export { context_status } from './context-status';
 export { submit_council_verdicts } from './convene-council';
 export { convene_general_council } from './convene-general-council';
 export { curator_analyze } from './curator-analyze';

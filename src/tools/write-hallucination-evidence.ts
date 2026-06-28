@@ -11,6 +11,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ToolDefinition } from '@opencode-ai/plugin/tool';
 import { z } from 'zod';
+import {
+	isAcceptedVerdict2,
+	normalizeVerdict2,
+	VERDICT_SET_2,
+} from '../evidence/normalize-verdict';
 import { validateSwarmPath } from '../hooks/utils';
 import { createSwarmTool } from './create-tool';
 
@@ -26,22 +31,6 @@ export interface WriteHallucinationEvidenceArgs {
 	summary: string;
 	/** Optional bullet list of FABRICATED/DRIFTED/UNSUPPORTED/BROKEN findings */
 	findings?: string;
-}
-
-/**
- * Normalize verdict string to lowercase format
- */
-function normalizeVerdict(verdict: string): 'approved' | 'rejected' {
-	switch (verdict) {
-		case 'APPROVED':
-			return 'approved';
-		case 'NEEDS_REVISION':
-			return 'rejected';
-		default:
-			throw new Error(
-				`Invalid verdict: must be 'APPROVED' or 'NEEDS_REVISION', got '${verdict}'`,
-			);
-	}
 }
 
 /**
@@ -64,8 +53,8 @@ export async function executeWriteHallucinationEvidence(
 		);
 	}
 
-	const validVerdicts = ['APPROVED', 'NEEDS_REVISION'] as const;
-	if (!validVerdicts.includes(args.verdict)) {
+	// Validate verdict is one of the allowed values (derived from shared module)
+	if (!isAcceptedVerdict2(args.verdict)) {
 		return JSON.stringify(
 			{
 				success: false,
@@ -90,7 +79,7 @@ export async function executeWriteHallucinationEvidence(
 		);
 	}
 
-	const normalizedVerdict = normalizeVerdict(args.verdict);
+	const normalizedVerdict = _internals.normalizeVerdict2(args.verdict);
 
 	const evidenceEntry = {
 		type: 'hallucination-verification',
@@ -160,6 +149,17 @@ export async function executeWriteHallucinationEvidence(
 }
 
 /**
+ * Dependency-injection seam for testing. Tests can temporarily replace these
+ * to verify that this writer delegates to the shared normalize-verdict module.
+ * Restore each entry in afterEach via the saved original reference.
+ */
+export const _internals = {
+	normalizeVerdict2,
+	VERDICT_SET_2,
+	isAcceptedVerdict2,
+};
+
+/**
  * Tool definition for write_hallucination_evidence
  */
 export const write_hallucination_evidence: ToolDefinition = createSwarmTool({
@@ -178,7 +178,7 @@ export const write_hallucination_evidence: ToolDefinition = createSwarmTool({
 				'The phase number for the hallucination verification (e.g., 1, 2, 3)',
 			),
 		verdict: z
-			.enum(['APPROVED', 'NEEDS_REVISION'])
+			.enum(VERDICT_SET_2 as [string, ...string[]])
 			.describe(
 				"Verdict of the hallucination verification: 'APPROVED' or 'NEEDS_REVISION'",
 			),

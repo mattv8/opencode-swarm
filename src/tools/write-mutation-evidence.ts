@@ -11,6 +11,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ToolDefinition } from '@opencode-ai/plugin/tool';
 import { z } from 'zod';
+import {
+	isAcceptedVerdict4,
+	normalizeVerdict4,
+	VERDICT_SET_4,
+} from '../evidence/normalize-verdict';
 import { validateSwarmPath } from '../hooks/utils';
 import { createSwarmTool } from './create-tool';
 
@@ -33,26 +38,6 @@ export interface WriteMutationEvidenceArgs {
 }
 
 /**
- * Normalize verdict string to lowercase format
- */
-function normalizeVerdict(verdict: string): 'pass' | 'warn' | 'fail' | 'skip' {
-	switch (verdict) {
-		case 'PASS':
-			return 'pass';
-		case 'WARN':
-			return 'warn';
-		case 'FAIL':
-			return 'fail';
-		case 'SKIP':
-			return 'skip';
-		default:
-			throw new Error(
-				`Invalid verdict: must be 'PASS', 'WARN', 'FAIL', or 'SKIP', got '${verdict}'`,
-			);
-	}
-}
-
-/**
  * Execute the write_mutation_evidence tool.
  */
 export async function executeWriteMutationEvidence(
@@ -72,8 +57,8 @@ export async function executeWriteMutationEvidence(
 		);
 	}
 
-	const validVerdicts = ['PASS', 'WARN', 'FAIL', 'SKIP'] as const;
-	if (!validVerdicts.includes(args.verdict)) {
+	// Validate verdict is one of the allowed values (derived from shared module)
+	if (!isAcceptedVerdict4(args.verdict)) {
 		return JSON.stringify(
 			{
 				success: false,
@@ -129,7 +114,7 @@ export async function executeWriteMutationEvidence(
 		);
 	}
 
-	const normalizedVerdict = normalizeVerdict(args.verdict);
+	const normalizedVerdict = _internals.normalizeVerdict4(args.verdict);
 
 	const evidenceEntry: {
 		type: 'mutation-gate';
@@ -212,6 +197,17 @@ export async function executeWriteMutationEvidence(
 }
 
 /**
+ * Dependency-injection seam for testing. Tests can temporarily replace these
+ * to verify that this writer delegates to the shared normalize-verdict module.
+ * Restore each entry in afterEach via the saved original reference.
+ */
+export const _internals = {
+	normalizeVerdict4,
+	VERDICT_SET_4,
+	isAcceptedVerdict4,
+};
+
+/**
  * Tool definition for write_mutation_evidence
  */
 export const write_mutation_evidence: ToolDefinition = createSwarmTool({
@@ -224,7 +220,7 @@ export const write_mutation_evidence: ToolDefinition = createSwarmTool({
 			.min(1)
 			.describe('The phase number for the mutation gate (e.g., 1, 2, 3)'),
 		verdict: z
-			.enum(['PASS', 'WARN', 'FAIL', 'SKIP'])
+			.enum(VERDICT_SET_4 as [string, ...string[]])
 			.describe(
 				"Verdict of the mutation gate: 'PASS', 'WARN', 'FAIL', or 'SKIP'",
 			),

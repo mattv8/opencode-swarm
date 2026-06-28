@@ -133,6 +133,11 @@ import {
 	formatDriftForContext,
 	getContextBudgetReport,
 } from '../services';
+import {
+	allocateInjectionBudget,
+	resetUnifiedBudget,
+	setSystemEnhancerDemand,
+} from '../services/injection-budget.js';
 import { telemetry } from '../telemetry';
 import { _internals as coChangeInternals } from '../tools/co-change-analyzer.js';
 import { warn } from '../utils';
@@ -580,12 +585,33 @@ export function createSystemEnhancerHook(
 					const maxInjectionTokens =
 						config.context_budget?.max_injection_tokens ?? 4000;
 					let injectedTokens = 0;
+					let actualDemand = 0;
+
+					// FR-002: unified injection budget — use pure allocation so
+					// system-enhancer (system.transform) and knowledge-injector
+					// (messagesTransform) share a single ceiling.
+					let seAllocation: number;
+					let unifiedBudget: number | undefined;
+					if (
+						config.context_budget?.unified_injection_tokens !== undefined &&
+						_input.sessionID
+					) {
+						unifiedBudget = config.context_budget.unified_injection_tokens;
+						const allocation = allocateInjectionBudget(maxInjectionTokens, 0, {
+							totalBudgetTokens: unifiedBudget,
+						});
+						seAllocation = allocation.systemEnhancerTokens;
+					} else {
+						seAllocation = maxInjectionTokens;
+					}
 
 					function tryInject(text: string): void {
 						const tokens = estimateTokens(text);
-						if (injectedTokens + tokens > maxInjectionTokens) {
+						actualDemand += tokens;
+						const effectiveMax = seAllocation;
+						if (injectedTokens + tokens > effectiveMax) {
 							warn(
-								`system-enhancer: injection budget exceeded (${injectedTokens + tokens} > ${maxInjectionTokens} tokens) — truncating system prompt content`,
+								`system-enhancer: injection budget exceeded (${injectedTokens + tokens} > ${effectiveMax} tokens) — truncating system prompt content`,
 							);
 							return;
 						}
@@ -1486,6 +1512,21 @@ ${handoffContent}`;
 							// Non-blocking — environment injection failure must not break the hook
 						}
 
+						// Finalize unified budget for Path A (non-scoring).
+						// Recompute seAllocation from actual demand so knowledge-injector
+						// sees the real system-enhancer demand (not the legacy 4K max).
+						if (unifiedBudget !== undefined && _input.sessionID) {
+							const totalDemand = actualDemand; // Path A has no late candidates
+							const allocation = allocateInjectionBudget(totalDemand, 0, {
+								totalBudgetTokens: unifiedBudget,
+							});
+							seAllocation = allocation.systemEnhancerTokens;
+							resetUnifiedBudget(_input.sessionID, unifiedBudget);
+							setSystemEnhancerDemand(_input.sessionID, totalDemand);
+						} else {
+							// Unified budget not configured; legacy caps apply.
+						}
+
 						return;
 					}
 
@@ -2185,7 +2226,8 @@ ${handoffContent}`;
 
 					// Inject in ranked order under budget
 					for (const candidate of ranked) {
-						if (injectedTokens + candidate.tokens > maxInjectionTokens) {
+						actualDemand += candidate.tokens;
+						if (injectedTokens + candidate.tokens > seAllocation) {
 							continue; // Skip if over budget
 						}
 						output.system.push(candidate.text);
@@ -2252,6 +2294,18 @@ ${handoffContent}`;
 								output.system.push(`[FOR: architect]\n${budgetWarning_b}`);
 							}
 						}
+					}
+
+					// Finalize unified budget for Path B (scoring).
+					// Path B may have late candidates; use the full actualDemand.
+					if (unifiedBudget !== undefined && _input.sessionID) {
+						const totalDemand = actualDemand;
+						const allocation = allocateInjectionBudget(totalDemand, 0, {
+							totalBudgetTokens: unifiedBudget,
+						});
+						seAllocation = allocation.systemEnhancerTokens;
+						resetUnifiedBudget(_input.sessionID, unifiedBudget);
+						setSystemEnhancerDemand(_input.sessionID, totalDemand);
 					}
 				} catch (error) {
 					warn('System enhancer failed:', error);

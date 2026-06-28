@@ -14,6 +14,7 @@ import {
 	EXTERNAL_SKILL_AGENT_TOOL_MAP,
 	GENERAL_COUNCIL_AGENT_TOOL_MAP,
 	MEMORY_AGENT_TOOL_MAP,
+	SKILL_AGENT_TOOL_MAP,
 	TOOL_DESCRIPTIONS,
 	TURBO_AGENT_TOOL_MAP,
 } from '../config/constants';
@@ -1316,6 +1317,7 @@ function buildYourToolsList(
 	memoryEnabled = false,
 	externalSkillsEnabled = false,
 	turboEnabled = false,
+	skillsEnabled = false,
 ): string {
 	const qaCouncilEnabled = council?.enabled === true;
 	const generalCouncilEnabled = council?.general?.enabled === true;
@@ -1330,6 +1332,7 @@ function buildYourToolsList(
 			? (GENERAL_COUNCIL_AGENT_TOOL_MAP.architect ?? [])
 			: []),
 		...(turboEnabled ? (TURBO_AGENT_TOOL_MAP.architect ?? []) : []),
+		...(skillsEnabled ? (SKILL_AGENT_TOOL_MAP.architect ?? []) : []),
 	];
 	const sorted = [...tools].sort();
 	return `Task (delegation), ${sorted.join(', ')}.`;
@@ -1417,6 +1420,7 @@ function buildAvailableToolsList(
 	memoryEnabled = false,
 	externalSkillsEnabled = false,
 	turboEnabled = false,
+	skillsEnabled = false,
 ): string {
 	const qaCouncilEnabled = council?.enabled === true;
 	const generalCouncilEnabled = council?.general?.enabled === true;
@@ -1431,6 +1435,7 @@ function buildAvailableToolsList(
 			? (GENERAL_COUNCIL_AGENT_TOOL_MAP.architect ?? [])
 			: []),
 		...(turboEnabled ? (TURBO_AGENT_TOOL_MAP.architect ?? []) : []),
+		...(skillsEnabled ? (SKILL_AGENT_TOOL_MAP.architect ?? []) : []),
 	];
 	const sorted = [...tools].sort();
 	return sorted
@@ -1634,6 +1639,7 @@ export function createArchitectAgent(
 	designDocsEnabled = false,
 	externalSkillsEnabled = false,
 	turboEnabled = false,
+	skillsEnabled = false,
 ): AgentDefinition {
 	let prompt = ARCHITECT_PROMPT;
 
@@ -1656,6 +1662,7 @@ export function createArchitectAgent(
 				memoryEnabled,
 				externalSkillsEnabled,
 				turboEnabled,
+				skillsEnabled,
 			),
 		)
 		?.replace(
@@ -1665,6 +1672,7 @@ export function createArchitectAgent(
 				memoryEnabled,
 				externalSkillsEnabled,
 				turboEnabled,
+				skillsEnabled,
 			),
 		)
 		?.replace('{{SLASH_COMMANDS}}', buildSlashCommandsList());

@@ -118,6 +118,105 @@ function formatBytes(bytes: number): string {
 }
 
 /**
+ * Infer a compact type signature for a JSON value.
+ */
+function jsonTypeSignature(value: unknown): string {
+	if (value === null) return 'null';
+	if (Array.isArray(value)) {
+		const len = value.length;
+		if (len === 0) return 'array<>';
+		const first = value[0];
+		return `array<${len}, ${jsonTypeSignature(first)}>`;
+	}
+	switch (typeof value) {
+		case 'string':
+			return 'string';
+		case 'number':
+			return Number.isInteger(value) ? 'number' : 'number(float)';
+		case 'boolean':
+			return 'boolean';
+		case 'object':
+			return 'object';
+		default:
+			return typeof value;
+	}
+}
+
+/**
+ * Build a structure-aware preview for a JSON object.
+ * Shows ALL top-level keys with their type signatures (AC-008 / SC-012).
+ */
+function summarizeJsonObject(parsed: Record<string, unknown>): string {
+	const keys = Object.keys(parsed);
+	const parts = keys.map((key) => `${key}: ${jsonTypeSignature(parsed[key])}`);
+	return `{ ${parts.join(', ')} }`;
+}
+
+/**
+ * Build a structure-aware preview for a JSON array.
+ */
+function summarizeJsonArray(parsed: unknown[]): string {
+	const len = parsed.length;
+	if (len === 0) return '[ 0 items ]';
+	const firstSig = jsonTypeSignature(parsed[0]);
+	return `[ ${len} items, first: ${firstSig} ]`;
+}
+
+/**
+ * Regex-based extractor for declaration signatures in code output.
+ */
+const DECLARATION_PATTERN =
+	/(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|const|let|var)\s+(\w+)/g;
+
+/**
+ * Extract declaration names from code text.
+ */
+function extractCodeSignatures(code: string): string[] {
+	const signatures: string[] = [];
+	for (const match of code.matchAll(DECLARATION_PATTERN)) {
+		const name = match[1];
+		if (name && !signatures.includes(name)) {
+			signatures.push(name);
+		}
+	}
+	return signatures;
+}
+
+/**
+ * Build a preview for code output that includes declaration signatures.
+ */
+function summarizeCode(output: string): string {
+	const signatures = extractCodeSignatures(output);
+	const lines = output
+		.split('\n')
+		.filter((line) => line.trim().length > 0)
+		.slice(0, 5);
+
+	if (signatures.length === 0) {
+		return lines.join('\n');
+	}
+
+	const sigLine = `// declarations: ${signatures.join(', ')}`;
+	const previewLines = [sigLine, ...lines];
+	return previewLines.join('\n');
+}
+
+/**
+ * Build a preview for plain text output (leading non-blank lines).
+ */
+function summarizeText(output: string, maxLines: number): string {
+	const lines = output
+		.split('\n')
+		.filter((line) => line.trim().length > 0)
+		.slice(0, maxLines);
+	return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
  * Creates a structured summary string from tool output.
  * @param output - The full tool output string
  * @param toolName - The name of the tool that produced the output
@@ -150,42 +249,23 @@ export function createSummary(
 			try {
 				const parsed = JSON.parse(output.trim());
 				if (Array.isArray(parsed)) {
-					preview = `[ ${parsed.length} items ]`;
+					preview = summarizeJsonArray(parsed);
 				} else if (typeof parsed === 'object' && parsed !== null) {
-					const keys = Object.keys(parsed).slice(0, 3);
-					preview = `{ ${keys.join(', ')}${Object.keys(parsed).length > 3 ? ', ...' : ''} }`;
+					preview = summarizeJsonObject(parsed as Record<string, unknown>);
 				} else {
-					// Fallback to first lines
-					const lines = output
-						.split('\n')
-						.filter((line) => line.trim().length > 0)
-						.slice(0, 3);
-					preview = lines.join('\n');
+					preview = summarizeText(output, 3);
 				}
 			} catch {
-				// Fallback to first lines if JSON parse fails
-				const lines = output
-					.split('\n')
-					.filter((line) => line.trim().length > 0)
-					.slice(0, 3);
-				preview = lines.join('\n');
+				preview = summarizeText(output, 3);
 			}
 			break;
 		}
 		case 'code': {
-			const lines = output
-				.split('\n')
-				.filter((line) => line.trim().length > 0)
-				.slice(0, 5);
-			preview = lines.join('\n');
+			preview = summarizeCode(output);
 			break;
 		}
 		case 'text': {
-			const lines = output
-				.split('\n')
-				.filter((line) => line.trim().length > 0)
-				.slice(0, 5);
-			preview = lines.join('\n');
+			preview = summarizeText(output, 5);
 			break;
 		}
 		case 'binary': {
@@ -193,11 +273,7 @@ export function createSummary(
 			break;
 		}
 		default: {
-			const lines = output
-				.split('\n')
-				.filter((line) => line.trim().length > 0)
-				.slice(0, 5);
-			preview = lines.join('\n');
+			preview = summarizeText(output, 5);
 		}
 	}
 
@@ -208,3 +284,15 @@ export function createSummary(
 
 	return `${headerLine}\n${preview}\n${footerLine}`;
 }
+
+/**
+ * Internal helpers exposed for testability.
+ */
+export const _internals = {
+	jsonTypeSignature,
+	summarizeJsonObject,
+	summarizeJsonArray,
+	extractCodeSignatures,
+	summarizeCode,
+	summarizeText,
+};
