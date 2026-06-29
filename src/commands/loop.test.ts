@@ -19,10 +19,19 @@ describe('handleLoopCommand', () => {
 		]);
 		expect(result.startsWith('[MODE: LOOP')).toBe(true);
 		expect(result).toContain('max_cycles=3');
-		expect(result).toContain('autonomy=checkpoint');
+		expect(result).toContain('autonomy=auto');
 		expect(result).toContain('depth=standard');
 		expect(result).toContain('resume=false');
 		expect(result).toContain('add rate limiting');
+	});
+
+	test('parses --autonomy checkpoint', async () => {
+		const result = await handleLoopCommand(TEST_DIR, [
+			'obj',
+			'--autonomy',
+			'checkpoint',
+		]);
+		expect(result).toContain('autonomy=checkpoint');
 	});
 
 	test('parses --max-cycles within range', async () => {

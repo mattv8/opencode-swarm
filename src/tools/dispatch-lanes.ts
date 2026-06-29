@@ -301,6 +301,7 @@ export interface CollectLaneResultsResult {
 
 export interface SessionOps {
 	create(args: {
+		body?: { parentID?: string; title?: string };
 		query: { directory: string };
 	}): Promise<{ data?: { id?: string } | null; error?: unknown }>;
 	prompt(args: {
@@ -681,9 +682,9 @@ async function launchAsyncLane(args: {
 	}
 	try {
 		const createTimeoutMessage = `Lane "${args.lane.id}" session.create timed out after ${args.timeoutMs}ms`;
-		const createPromise = args.session.create({
-			query: { directory: args.directory },
-		});
+		const createPromise = args.session.create(
+			buildLaneSessionCreateArgs(args.directory, args.lane, args.context),
+		);
 		let createTimedOut = false;
 		createPromise
 			.then((createResult) => {
@@ -1055,7 +1056,9 @@ async function runLane(
 	let sessionId: string | undefined;
 	try {
 		const createTimeoutMessage = `Lane "${lane.id}" session.create timed out after ${timeoutMs}ms`;
-		const createPromise = session.create({ query: { directory } });
+		const createPromise = session.create(
+			buildLaneSessionCreateArgs(directory, lane, context),
+		);
 		let createTimedOut = false;
 		createPromise
 			.then((createResult) => {
@@ -1617,6 +1620,24 @@ function isoNow(): string {
 	return new Date(_internals.now()).toISOString();
 }
 
+function buildLaneSessionCreateArgs(
+	directory: string,
+	lane: DispatchLaneSpec,
+	context: Pick<DispatchLanesExecutionContext, 'sessionID'>,
+): {
+	body: { parentID?: string; title: string };
+	query: { directory: string };
+} {
+	const parentID = context.sessionID?.trim();
+	return {
+		body: {
+			...(parentID ? { parentID } : {}),
+			title: `${lane.id} (${lane.agent})`,
+		},
+		query: { directory },
+	};
+}
+
 function makeBatchId(): string {
 	return `lanes-${_internals.now().toString(36)}`;
 }
@@ -1661,6 +1682,7 @@ export const dispatch_lanes: ReturnType<typeof createSwarmTool> =
 		execute: async (args: unknown, directory: string, ctx): Promise<string> => {
 			const result = await executeDispatchLanes(args, directory, {
 				callerAgent: getContextAgent(ctx),
+				sessionID: getContextSessionID(ctx),
 			});
 			return JSON.stringify(result, null, 2);
 		},

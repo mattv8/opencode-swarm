@@ -190,12 +190,19 @@ async function dispatchReviewer(
 	prompt: string,
 	agentName: string,
 	timeoutMs: number,
+	parentSessionId: string,
 ): Promise<string> {
 	const client = swarmState.opencodeClient;
 	if (!client) {
 		throw new Error('OpencodeClient not available');
 	}
-	const createResult = await client.session.create({ query: { directory } });
+	const createResult = await client.session.create({
+		body: {
+			parentID: parentSessionId,
+			title: `auto-review (${agentName}) background`,
+		},
+		query: { directory },
+	});
 	if (!createResult.data?.id) {
 		throw new Error('Failed to create auto-review session');
 	}
@@ -356,6 +363,7 @@ export async function runAutoReview(input: AutoReviewRunInput): Promise<void> {
 				prompt,
 				agentName,
 				config.timeout_ms,
+				sessionID,
 			);
 		} catch (err) {
 			writeAutoReviewEvent(directory, {

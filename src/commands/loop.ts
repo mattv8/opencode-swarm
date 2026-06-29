@@ -17,7 +17,7 @@ const MAX_OBJECTIVE_LEN = 2000;
 const DEPTHS = new Set(['standard', 'exhaustive']);
 const AUTONOMY_LEVELS = new Set(['checkpoint', 'auto']);
 const DEFAULT_DEPTH = 'standard';
-const DEFAULT_AUTONOMY = 'checkpoint';
+const DEFAULT_AUTONOMY = 'auto';
 const DEFAULT_MAX_CYCLES = 3;
 const MIN_MAX_CYCLES = 1;
 const MAX_MAX_CYCLES = 5;
@@ -30,13 +30,13 @@ iterating until the objective is met or a budget stop condition fires.
 Examples:
   /swarm loop "add rate limiting to the public API"
   /swarm loop "harden auth session handling" --depth exhaustive --max-cycles 2
-  /swarm loop "migrate config loader" --autonomy auto
+  /swarm loop "migrate config loader" --autonomy checkpoint
   /swarm loop --resume
 
 Flags:
   --max-cycles <N>          outer improvement cycles, 1..5 (default: 3)
-  --autonomy <level>        checkpoint (pause at phase gates, default) or auto
-                            (run unattended; hard stop conditions still apply)
+  --autonomy <level>        auto (default; run unattended with hard stops still
+                            enforced) or checkpoint (pause at phase gates)
   --depth <name>            standard (default) or exhaustive (wider exploration)
   --resume                  resume the existing loop run from durable state in
                             .swarm/loop/ instead of starting a new objective`;

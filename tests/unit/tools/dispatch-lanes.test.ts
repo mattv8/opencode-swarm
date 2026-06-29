@@ -124,6 +124,7 @@ describe('executeDispatchLanes', () => {
 				],
 			},
 			directory,
+			{ sessionID: 'parent-session-1' },
 		);
 
 		await allStarted.promise;
@@ -138,6 +139,15 @@ describe('executeDispatchLanes', () => {
 			'completed',
 		]);
 		expect(ops.create).toHaveBeenCalledTimes(3);
+		expect(
+			(ops.create as ReturnType<typeof mock>).mock.calls.map(
+				(call) => call[0].body,
+			),
+		).toEqual([
+			{ parentID: 'parent-session-1', title: 'runtime (explorer)' },
+			{ parentID: 'parent-session-1', title: 'tests (reviewer)' },
+			{ parentID: 'parent-session-1', title: 'docs (critic)' },
+		]);
 		expect(ops.prompt).toHaveBeenCalledTimes(3);
 		expect(ops.delete).toHaveBeenCalledTimes(3);
 		for (const call of (ops.prompt as ReturnType<typeof mock>).mock.calls) {
@@ -179,6 +189,10 @@ describe('executeDispatchLanes', () => {
 		);
 
 		expect(result.success).toBe(true);
+		expect(ops.create).toHaveBeenCalledTimes(1);
+		expect(ops.create.mock.calls[0][0].body).toEqual({
+			title: 'scan (explorer)',
+		});
 		expect(ops.prompt).toHaveBeenCalledTimes(1);
 		expect(ops.prompt.mock.calls[0][0].body.tools).toMatchObject({
 			summarize_work: false,
@@ -985,6 +999,7 @@ describe('executeDispatchLanesAsync and executeCollectLaneResults', () => {
 				],
 			},
 			directory,
+			{ sessionID: 'parent-async-1' },
 		);
 
 		expect(result.success).toBe(true);
@@ -1000,6 +1015,15 @@ describe('executeDispatchLanesAsync and executeCollectLaneResults', () => {
 		expect(result.lane_results.map((lane) => lane.status)).toEqual([
 			'pending',
 			'pending',
+		]);
+		expect(ops.create).toHaveBeenCalledTimes(2);
+		expect(
+			(ops.create as ReturnType<typeof mock>).mock.calls.map(
+				(call) => call[0].body,
+			),
+		).toEqual([
+			{ parentID: 'parent-async-1', title: 'runtime (explorer)' },
+			{ parentID: 'parent-async-1', title: 'tests (reviewer)' },
 		]);
 		expect(ops.promptAsync).toHaveBeenCalledTimes(2);
 		const promptAsyncCalls = (ops.promptAsync as ReturnType<typeof mock>).mock
@@ -1022,6 +1046,7 @@ describe('executeDispatchLanesAsync and executeCollectLaneResults', () => {
 		const records = findByBatchId(directory, 'batch-async-1');
 		expect(records).toHaveLength(2);
 		expect(records[0].status).toBe('running');
+		expect(records[0].parentSessionId).toBe('parent-async-1');
 		expect(records[0].workspace?.prHeadSha).toBe('abc123');
 		expect(records[0].generation).toBe(1);
 		expect(records[0].workspace?.scope).toBe('src');
@@ -1100,6 +1125,10 @@ describe('executeDispatchLanesAsync and executeCollectLaneResults', () => {
 				session_id: 'session-nonblocking',
 			}),
 		);
+		expect(ops.create).toHaveBeenCalledTimes(1);
+		expect(ops.create.mock.calls[0][0].body).toEqual({
+			title: 'runtime (explorer)',
+		});
 		await promptStarted.promise;
 		expect(promptResolved).toBe(false);
 		expect(findByBatchId(directory, 'batch-nonblocking-launch')[0].status).toBe(
