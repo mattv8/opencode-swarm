@@ -180,10 +180,15 @@ jobs:
           echo "Running coverage measurement for gate enforcement..."
           # Run the full unit test suite with coverage
           bun --smol test --coverage tests/unit/ --timeout 60000 > coverage-output.txt 2>&1 || true
-          # Extract line coverage from "All files" row
-          COVERAGE=$(grep -E "All files" coverage-output.txt | head -1 | awk -F'|' '{gsub(/ /,"",$2); print $2}' | head -c 5)
-          if [ -z "$COVERAGE" ]; then
+          # Extract line coverage from "All files" row using awk (no command substitution)
+          awk -F'|' '/All files/ { gsub(/ /,"",$2); print substr($2, 1, 5); exit }' coverage-output.txt > coverage-value.txt
+          if [ ! -s coverage-value.txt ]; then
             echo "::warning::Could not parse coverage output"
+            : > coverage-value.txt
+          fi
+          head -c 5 coverage-value.txt > coverage-trimmed.txt
+          read -r COVERAGE < coverage-trimmed.txt || true
+          if [ -z "$COVERAGE" ]; then
             COVERAGE="0"
           fi
           THRESHOLD=41.48
