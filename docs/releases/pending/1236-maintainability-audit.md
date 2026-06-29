@@ -1,6 +1,6 @@
 # Maintainability Audit Fixes: dedup key, normalizePath, agent boilerplate
 
-## What
+## What changed
 
 Closes the 5 actionable findings from the maintainability deep-dive audit (#1236):
 
